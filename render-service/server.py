@@ -47,7 +47,15 @@ def _fetch_totales():
     """Lee solo los 3 contadores de resumen de la portada — ningún dato
     individual. Heurística tolerante: busca 3 números junto a las palabras
     clave que ya usa el propio sitio en su portada."""
-    resp = requests.get(SITE_BASE, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+    resp = requests.get(
+        SITE_BASE,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept-Language": "es-CO,es;q=0.9,en;q=0.8",
+        },
+        timeout=35,
+    )
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
     text = soup.get_text(" ", strip=True)

@@ -29,11 +29,26 @@ LIST_URL = f"{SITE_BASE}?tab=persons"
 RELEVANT_CATEGORIES = {"terremoto", "desastre natural", "persona extraviada"}
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; MapaEmergenciaChocoBot/1.0; "
-                  "+https://colombiatebusca.com/)"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "es-CO,es;q=0.9,en;q=0.8",
 }
 
+REQUEST_TIMEOUT = 35  # el sitio puede tardar bajo carga alta; mejor esperar de más que fallar rápido
 MAX_PAGES = 3  # límite de páginas a recorrer por corrida, para no sobrecargar el sitio origen
+
+
+def _get_with_retry(url, tries=2):
+    last_err = None
+    for attempt in range(tries):
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+            resp.raise_for_status()
+            return resp
+        except requests.RequestException as e:
+            last_err = e
+    raise last_err
 
 
 def _norm(s: str) -> str:
@@ -123,12 +138,11 @@ def _parse_cards(html: str):
     return records
 
 
-def fetch_all_cards(max_pages=MAX_PAGES, timeout=20):
+def fetch_all_cards(max_pages=MAX_PAGES, timeout=REQUEST_TIMEOUT):
     all_records = []
     for page in range(1, max_pages + 1):
         url = LIST_URL if page == 1 else f"{LIST_URL}&page={page}"
-        resp = requests.get(url, headers=HEADERS, timeout=timeout)
-        resp.raise_for_status()
+        resp = _get_with_retry(url)
         records = _parse_cards(resp.text)
         if not records:
             break
