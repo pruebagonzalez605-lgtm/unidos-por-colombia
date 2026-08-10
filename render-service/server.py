@@ -61,8 +61,10 @@ def _fetch_totales():
     text = soup.get_text(" ", strip=True)
 
     def find_near(label):
-        m = re.search(r"([\d.,]{1,7})\s*" + label, text, re.I) or \
-            re.search(label + r"\s*([\d.,]{1,7})", text, re.I)
+        # Entre el número y la etiqueta puede haber una palabra pegada
+        # (ej. "756Personas registradas"), no solo espacios.
+        m = re.search(r"([\d.,]{1,7})\s*(?:\w+\s*)?" + label, text, re.I) or \
+            re.search(label + r"\s*(?:\w+\s*)?([\d.,]{1,7})", text, re.I)
         if not m:
             return None
         return int(re.sub(r"[.,]", "", m.group(1)))

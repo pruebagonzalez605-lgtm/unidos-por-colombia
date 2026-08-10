@@ -117,12 +117,17 @@ def _parse_cards(html: str):
 
         status_m = re.search(r"(Por localizar|Localizad[ao]s?)", text, re.I)
         loc_m = re.search(r"⌖\s*([^\n]+)", text)
-        cat_m = re.search(r"▣\s*([^\n\-]+)", text)  # categoría suele ir tras este símbolo
 
         if not status_m or not loc_m:
             continue
 
-        category = _norm(cat_m.group(1)) if cat_m else ""
+        # La categoría va pegada al estado en la misma línea, sin símbolo
+        # propio (ej. "Por localizarTerremoto"). El símbolo ▣ en realidad
+        # marca la línea de documento/edad/género, no la categoría.
+        cat_line = next(
+            (l for l in text.split("\n") if status_m.group(0) in l), ""
+        )
+        category = _norm(cat_line.replace(status_m.group(0), "").strip())
         # Si no reconocemos la categoría como relacionada al sismo, la
         # descartamos (igual que hizo la muestra manual original).
         if category and not any(c in category for c in RELEVANT_CATEGORIES):
