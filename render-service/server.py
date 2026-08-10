@@ -13,6 +13,7 @@ CORS: abierto (*) porque estos son datos agregados, públicos y sin
 información personal — no hay motivo para restringir el origen.
 """
 
+import json
 import logging
 import os
 import re
@@ -31,6 +32,15 @@ log = logging.getLogger("mapa-choco")
 
 REFRESH_SECONDS = int(os.environ.get("REFRESH_SECONDS", "300"))  # 5 min por defecto
 
+# El plan free de Render "duerme" el contenedor entero tras un rato sin
+# tráfico y lo reinicia desde cero en la próxima visita — eso borra la
+# memoria del proceso igual que un deploy. Para que el servicio no quede
+# devolviendo 503 mientras corre el primer ciclo otra vez, guardamos el
+# último resultado bueno en disco y lo recargamos al arrancar. Los datos
+# que persisten acá son los mismos conteos agregados que ya expone
+# /agregado.json y /totales.json — nunca información individual.
+CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache_estado.json")
+
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
@@ -41,6 +51,39 @@ _state = {
     "totales": None,       # {"registradas": int, "porLocalizar": int, "localizadas": int}
     "totales_error": None,
 }
+
+
+def _load_cache():
+    """Recupera el último estado bueno guardado en disco, si existe, para
+    no arrancar en blanco tras un reinicio (deploy o spin-down del plan
+    free). Si el archivo no existe o está corrupto, sigue de largo sin
+    romper el arranque."""
+    try:
+        with open(CACHE_PATH, "r", encoding="utf-8") as f:
+            cached = json.load(f)
+        with _state_lock:
+            if cached.get("agregado") is not None:
+                _state["agregado"] = cached["agregado"]
+            if cached.get("totales") is not None:
+                _state["totales"] = cached["totales"]
+        log.info("Estado recuperado de %s", CACHE_PATH)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        log.warning("No se pudo leer el cache en disco (%s): %s", CACHE_PATH, e)
+
+
+def _save_cache():
+    """Escribe el estado actual a disco. Se llama después de cada
+    actualización exitosa. Falla en silencio (con warning) si el disco no
+    es escribible — el servicio sigue funcionando solo en memoria."""
+    try:
+        with _state_lock:
+            snapshot = {"agregado": _state["agregado"], "totales": _state["totales"]}
+        with open(CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(snapshot, f, ensure_ascii=False)
+    except Exception as e:
+        log.warning("No se pudo guardar el cache en disco (%s): %s", CACHE_PATH, e)
 
 
 def _fetch_totales():
@@ -90,6 +133,7 @@ def _refresh_loop():
                 _state["agregado_error"] = None
             log.info("agregado.json actualizado: %d municipios, muestra=%d",
                       len(data["locations"]), data["sample_size"])
+            _save_cache()
         except Exception as e:
             with _state_lock:
                 _state["agregado_error"] = str(e)
@@ -101,6 +145,7 @@ def _refresh_loop():
                 _state["totales"] = totales
                 _state["totales_error"] = None
             log.info("totales.json actualizado: %s", totales)
+            _save_cache()
         except Exception as e:
             with _state_lock:
                 _state["totales_error"] = str(e)
@@ -141,6 +186,12 @@ def totales():
         return jsonify({"error": err or "Aún sin datos, reintenta en unos segundos"}), 503
     return jsonify(data)
 
+
+# Recupera el último estado bueno (si existe) ANTES de arrancar el
+# scheduler, para que / , /agregado.json y /totales.json puedan servir
+# algo útil desde el primer request, aunque sea un poco viejo, en lugar
+# de 503 mientras corre el primer ciclo de scraping otra vez.
+_load_cache()
 
 # Arranca el scheduler en un hilo de fondo apenas se importa el módulo,
 # para que funcione tanto con `python server.py` como bajo gunicorn.
