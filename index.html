@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+  <title>Mapa de emergencia · Sismo Chocó — Colombia te busca</title>
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Barlow:wght@300;400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="data.js"></script>
+  <script src="geo.js"></script>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    *:focus { outline: none; }
+
+    :root {
+      --gold: #FCD116;
+      --red: #CE1126;
+      --blue: #003893;
+      --dark: #07090f;
+      --dark-2: #0d1421;
+      --dark-3: #131c2b;
+      --text: #dde4ef;
+      --muted: #7c8aa0;
+      --border: rgba(255,255,255,.08);
+      --glass: rgba(10,15,25,.94);
+      --panel-w: 380px;
+      --activity-w: 320px;
+      --r: 14px;
+    }
+
+    html, body { height: 100%; }
+    body {
+      background: var(--dark);
+      font-family: 'Barlow', sans-serif;
+      color: var(--text);
+      overflow: hidden;
+    }
+
+    #map { position: fixed; top: 0; left: 0; bottom: 0; right: var(--activity-w); z-index: 0; background: var(--dark); }
+    .leaflet-container { background: var(--dark) !important; }
+    .leaflet-control-attribution {
+      background: rgba(7,9,15,.75) !important;
+      color: var(--muted) !important;
+      font-size: 10px !important;
+    }
+    .leaflet-control-attribution a { color: var(--muted) !important; }
+
+    /* ─── HEADER BAR ─── */
+    .topbar {
+      position: fixed;
+      top: 0; left: 0; right: var(--activity-w);
+      z-index: 1200;
+      background: linear-gradient(180deg, rgba(7,9,15,.96), rgba(7,9,15,.75) 80%, transparent);
+      padding: 16px 20px 40px;
+      pointer-events: none;
+    }
+    .topbar-inner {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      pointer-events: auto;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-flag {
+      display: flex; flex-direction: column; width: 30px; height: 30px; border-radius: 7px; overflow: hidden;
+      flex-shrink: 0; box-shadow: 0 0 20px rgba(252,209,22,.25);
+    }
+    .brand-flag div:nth-child(1) { background: var(--gold); height: 50%; }
+    .brand-flag div:nth-child(2) { background: var(--blue); height: 25%; }
+    .brand-flag div:nth-child(3) { background: var(--red); height: 25%; }
+    .brand-title { font-family: 'Barlow Condensed', sans-serif; font-size: 19px; font-weight: 800; color: #fff; line-height: 1.1; }
+    .brand-sub { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .12em; margin-top: 2px; }
+
+    .emergency-strip {
+      display: flex; gap: 10px; flex-wrap: wrap;
+      background: var(--glass);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 12px;
+      backdrop-filter: blur(20px);
+      font-family: 'Space Mono', monospace;
+      font-size: 11px;
+    }
+    .emergency-strip b { color: var(--gold); margin-right: 3px; }
+    .emergency-strip span { color: var(--muted); margin-right: 12px; }
+    .emergency-strip span:last-child { margin-right: 0; }
+
+    /* ─── STATS ROW ─── */
+    .stats-float {
+      position: fixed;
+      top: 88px; left: 20px;
+      z-index: 1100;
+      display: flex; gap: 8px;
+      animation: fadeUp .6s .2s ease both;
+    }
+    .stat-chip {
+      background: var(--glass);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 14px;
+      backdrop-filter: blur(20px);
+      min-width: 84px;
+      text-align: center;
+    }
+    .stat-chip .n { font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 800; line-height: 1; }
+    .stat-chip .l { font-size: 9px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-top: 3px; }
+    .stat-chip.missing .n { color: var(--red); }
+    .stat-chip.found .n { color: #4ade80; }
+    .stat-chip.total .n { color: var(--gold); }
+
+    .update-row {
+      position: fixed;
+      top: 138px; left: 20px;
+      z-index: 1100;
+      display: flex; align-items: center; gap: 8px;
+      font-size: 10px; color: var(--muted);
+      font-family: 'Space Mono', monospace;
+      animation: fadeUp .6s .3s ease both;
+    }
+    .update-row #refreshBtn {
+      background: var(--glass); border: 1px solid var(--border);
+      color: var(--gold); width: 22px; height: 22px; border-radius: 6px;
+      cursor: pointer; font-size: 12px; line-height: 1;
+      display: flex; align-items: center; justify-content: center;
+      transition: transform .3s;
+    }
+    .update-row #refreshBtn:hover { transform: rotate(90deg); }
+    .update-row #refreshBtn.spinning { animation: spin .8s linear infinite; }
+    @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+
+    /* ─── LEGEND ─── */
+    .legend {
+      position: fixed;
+      bottom: 20px; left: 20px;
+      z-index: 1100;
+      background: var(--glass);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 14px 16px;
+      backdrop-filter: blur(20px);
+      max-width: 230px;
+      animation: fadeUp .6s .4s ease both;
+    }
+    .legend-head { font-size: 9px; text-transform: uppercase; letter-spacing: .14em; color: var(--muted); font-weight: 700; margin-bottom: 10px; }
+    .legend-row { display: flex; align-items: center; gap: 9px; font-size: 11px; color: rgba(255,255,255,.7); margin-bottom: 7px; }
+    .legend-dot { border-radius: 50%; flex-shrink: 0; border: 2px solid #fff; }
+    .legend-note { font-size: 10px; color: var(--muted); margin-top: 8px; line-height: 1.5; border-top: 1px solid var(--border); padding-top: 8px; }
+
+    /* ─── SOURCE / DISCLAIMER PANEL ─── */
+    .source-panel {
+      position: fixed;
+      bottom: 0; right: var(--activity-w);
+      z-index: 1400;
+      background: var(--glass);
+      border: 1px solid var(--border);
+      border-radius: var(--r) 0 0 0;
+      padding: 20px 26px 34px 20px;
+      backdrop-filter: blur(20px);
+      max-width: 340px;
+      animation: fadeUp .6s .5s ease both;
+    }
+    .source-panel .t { font-size: 9px; text-transform: uppercase; letter-spacing: .12em; color: var(--gold); font-weight: 700; margin-bottom: 6px; }
+    .source-panel p { font-size: 11px; color: var(--muted); line-height: 1.55; margin-bottom: 10px; }
+    .source-panel a.cta {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: var(--gold); color: #000; font-weight: 700;
+      font-size: 11px; padding: 8px 14px; border-radius: 8px;
+      text-decoration: none; transition: transform .2s;
+    }
+    .source-panel a.cta:hover { transform: translateY(-1px); }
+
+    /* ─── ACTIVITY PANEL (columna derecha) ─── */
+    .activity-panel {
+      position: fixed;
+      top: 0; right: 0; bottom: 0;
+      width: var(--activity-w);
+      z-index: 1300;
+      background: var(--dark-2);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+    }
+    .activity-head {
+      padding: 18px 18px 14px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .activity-eyebrow {
+      font-family: 'Space Mono', monospace;
+      font-size: 9px; letter-spacing: .12em; text-transform: uppercase;
+      color: var(--muted); margin-bottom: 4px;
+    }
+    .activity-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .activity-title { font-family: 'Barlow Condensed', sans-serif; font-size: 20px; font-weight: 800; color: #fff; }
+    .activity-count {
+      background: rgba(252,209,22,.14); color: var(--gold);
+      border: 1px solid rgba(252,209,22,.3);
+      font-size: 10px; font-weight: 700; padding: 4px 9px; border-radius: 999px;
+      white-space: nowrap;
+      display: flex; align-items: center; gap: 5px;
+    }
+    .activity-count .dot {
+      width: 6px; height: 6px; border-radius: 50%; background: var(--gold);
+      animation: pulse-ring 1.8s infinite;
+    }
+    .activity-list { flex: 1; overflow-y: auto; padding: 4px 0; }
+    .activity-list::-webkit-scrollbar { width: 6px; }
+    .activity-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 3px; }
+
+    .activity-item {
+      display: flex; align-items: flex-start; gap: 11px;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background .15s;
+    }
+    .activity-item:hover { background: rgba(255,255,255,.03); }
+    .activity-badge {
+      flex-shrink: 0; width: 30px; height: 30px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 13px;
+      margin-top: 1px;
+    }
+    .activity-badge.p { background: rgba(206,17,38,.16); color: var(--red); }
+    .activity-badge.ok { background: rgba(74,222,128,.16); color: #4ade80; }
+    .activity-badge.sismo { background: rgba(252,209,22,.16); color: var(--gold); }
+    .activity-body { flex: 1; min-width: 0; }
+    .activity-cat {
+      font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+      margin-bottom: 3px;
+    }
+    .activity-cat.p { color: var(--red); }
+    .activity-cat.ok { color: #4ade80; }
+    .activity-cat.sismo { color: var(--gold); }
+    .activity-name {
+      font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700;
+      color: #fff; line-height: 1.2; margin-bottom: 2px;
+    }
+    .activity-loc { font-size: 11px; color: var(--muted); }
+    .activity-detail { font-size: 10px; color: var(--muted); margin-top: 2px; }
+    .activity-side {
+      flex-shrink: 0; text-align: right; font-size: 10px; color: var(--muted);
+      font-family: 'Space Mono', monospace; padding-top: 2px;
+    }
+    .activity-side b { display: block; font-size: 13px; color: var(--text); font-family: 'Barlow Condensed', sans-serif; }
+
+    .activity-foot {
+      padding: 12px 18px 14px;
+      border-top: 1px solid var(--border);
+      font-size: 10px; color: var(--muted); line-height: 1.5;
+      flex-shrink: 0;
+    }
+    .activity-foot a { color: var(--gold); text-decoration: none; font-weight: 700; }
+
+    /* ─── POPUP ─── */
+    .leaflet-popup-content-wrapper {
+      background: var(--glass) !important;
+      color: var(--text) !important;
+      border: 1px solid var(--border) !important;
+      border-radius: 12px !important;
+      backdrop-filter: blur(24px);
+      box-shadow: 0 12px 40px rgba(0,0,0,.6) !important;
+    }
+    .leaflet-popup-tip { background: var(--glass) !important; }
+    .leaflet-popup-content { margin: 14px 16px; min-width: 220px; }
+    .pop-title { font-family: 'Barlow Condensed', sans-serif; font-size: 19px; font-weight: 800; color: #fff; margin-bottom: 2px; }
+    .pop-title span { color: var(--gold); }
+    .pop-dept { font-size: 11px; color: var(--muted); margin-bottom: 12px; }
+    .pop-rows { display: flex; gap: 8px; margin-bottom: 12px; }
+    .pop-stat { flex: 1; text-align: center; background: rgba(255,255,255,.04); border-radius: 8px; padding: 8px 4px; }
+    .pop-stat .n { font-family: 'Barlow Condensed', sans-serif; font-size: 20px; font-weight: 800; }
+    .pop-stat.miss .n { color: var(--red); }
+    .pop-stat.found .n { color: #4ade80; }
+    .pop-stat .l { font-size: 8px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-top: 2px; }
+    .pop-link {
+      display: block; text-align: center;
+      background: rgba(252,209,22,.12); color: var(--gold);
+      border: 1px solid rgba(252,209,22,.3);
+      font-size: 11px; font-weight: 700; padding: 9px; border-radius: 8px;
+      text-decoration: none; transition: background .2s;
+    }
+    .pop-link:hover { background: rgba(252,209,22,.22); }
+    .pop-epicentro {
+      font-size: 10px; color: var(--red); text-transform: uppercase; letter-spacing: .08em;
+      font-weight: 700; margin-bottom: 8px;
+    }
+
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes pulse-ring {
+      0% { box-shadow: 0 0 0 0 rgba(206,17,38,.5); }
+      70% { box-shadow: 0 0 0 14px rgba(206,17,38,0); }
+      100% { box-shadow: 0 0 0 0 rgba(206,17,38,0); }
+    }
+    .epicentro-marker {
+      width: 16px; height: 16px; border-radius: 50%;
+      background: var(--red); border: 2px solid #fff;
+      animation: pulse-ring 2s infinite;
+    }
+
+    .dept-lbl {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,.32);
+      white-space: nowrap;
+      text-align: center;
+      pointer-events: none;
+    }
+
+    /* ─── RESPONSIVE ─── */
+    @media (max-width: 768px) {
+      :root { --activity-w: 0px; }
+      .activity-panel { display: none; }
+      .topbar { padding: 12px 12px 30px; }
+      .brand-title { font-size: 16px; }
+      .stats-float { top: 78px; left: 12px; gap: 6px; }
+      .stat-chip { padding: 6px 10px; min-width: 70px; }
+      .stat-chip .n { font-size: 18px; }
+      .emergency-strip { display: none; }
+      .update-row { top: 128px; left: 12px; font-size: 9px; }
+      .legend { left: 12px; right: 12px; bottom: 12px; max-width: none; padding: 12px 14px; }
+      .source-panel { left: 12px; right: 0; bottom: 108px; max-width: none; padding: 14px 16px; border-radius: var(--r); }
+      .legend, .source-panel { display: none; }
+      .mobile-info-toggle {
+        display: flex; position: fixed; bottom: 16px; left: 16px; right: 16px; z-index: 1150;
+        background: var(--glass); border: 1px solid var(--border); border-radius: 12px;
+        padding: 12px 16px; backdrop-filter: blur(20px); align-items: center; justify-content: space-between;
+        text-decoration: none; color: var(--text);
+      }
+      .mobile-info-toggle b { color: var(--gold); font-size: 12px; }
+      .mobile-info-toggle span { font-size: 10px; color: var(--muted); }
+    }
+    @media (min-width: 769px) { .mobile-info-toggle { display: none; } }
+    @media (min-width: 769px) and (max-width: 1100px) {
+      :root { --activity-w: 260px; }
+      .activity-name { font-size: 14px; }
+      .activity-side { font-size: 9px; }
+    }
+
+    /* ─── MODO EMBED (?embed=1) ───
+       Pensado para iframes chicos incrustados en otro sitio: compacta el
+       topbar, quita el link "0-800" telefónico repetido y agrega un
+       "Ver mapa completo ↗" que abre la versión completa en pestaña nueva. */
+    body.is-embed .topbar { padding: 10px 12px 26px; }
+    body.is-embed .brand-sub { display: none; }
+    body.is-embed .brand-title { font-size: 15px; }
+    body.is-embed .brand-flag { width: 22px; height: 22px; }
+    body.is-embed .emergency-strip { padding: 6px 9px; font-size: 10px; gap: 7px; }
+    body.is-embed .stats-float { top: 66px; }
+    body.is-embed .legend { display: none; }
+    body.is-embed .source-panel { display: none; }
+    .embed-open-full {
+      position: fixed; left: 12px; bottom: 12px; z-index: 1150;
+      display: none;
+      background: var(--glass); border: 1px solid var(--border); border-radius: 8px;
+      padding: 7px 12px; font-size: 10px; font-weight: 700; letter-spacing: .04em;
+      color: var(--gold); text-decoration: none; backdrop-filter: blur(20px);
+    }
+    body.is-embed .embed-open-full { display: inline-block; }
+  </style>
+</head>
+
+<body>
+  <div id="map"></div>
+
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="brand-flag"><div></div><div></div><div></div></div>
+        <div>
+          <div class="brand-title">Mapa de emergencia · Sismo Chocó</div>
+          <div class="brand-sub">Datos agregados · Colombia te busca</div>
+        </div>
+      </div>
+      <div class="emergency-strip">
+        <span><b>123</b>Emergencias</span>
+        <span><b>112</b>Policía</span>
+        <span><b>132</b>Cruz Roja</span>
+        <span><b>144</b>Defensa Civil</span>
+        <span><b>119</b>Bomberos</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- STATS -->
+  <div class="stats-float">
+    <div class="stat-chip total"><div class="n" id="statTotal">—</div><div class="l">Registradas</div></div>
+    <div class="stat-chip missing"><div class="n" id="statMissing">—</div><div class="l">Por localizar</div></div>
+    <div class="stat-chip found"><div class="n" id="statFound">—</div><div class="l">Localizadas</div></div>
+  </div>
+  <div class="update-row" id="updateRow">
+    <span id="updateStatus">Cargando datos en vivo…</span>
+    <button id="refreshBtn" title="Actualizar ahora">↻</button>
+  </div>
+
+  <!-- LEGEND -->
+  <div class="legend">
+    <div class="legend-head">Leyenda</div>
+    <div class="legend-row"><div class="legend-dot" style="width:10px;height:10px;background:var(--red)"></div>Muy pocos casos</div>
+    <div class="legend-row"><div class="legend-dot" style="width:16px;height:16px;background:var(--red)"></div>Varios casos</div>
+    <div class="legend-row"><div class="legend-dot" style="width:24px;height:24px;background:var(--red)"></div>Alta concentración</div>
+    <div class="legend-row"><div class="legend-dot" style="width:10px;height:10px;background:var(--red);border:2px solid #fff;animation:pulse-ring 2s infinite"></div>Epicentro del sismo</div>
+    <div class="legend-note">El tamaño del punto es proporcional a la cantidad de reportes "por localizar" en ese municipio.</div>
+  </div>
+
+  <!-- SOURCE PANEL -->
+  <div class="source-panel">
+    <div class="t">⚠ Sobre estos datos</div>
+    <p>
+      Este mapa muestra <b>conteos agregados por municipio</b>, tomados de una
+      muestra de reportes públicos en Colombia te busca. No incluye nombres,
+      fotos ni documentos — esa información cambia constantemente (personas
+      localizadas, correcciones) y solo debe consultarse en la fuente oficial.
+    </p>
+    <a class="cta" href="https://colombiatebusca.com/" target="_blank" rel="noopener">Ver reportes actualizados →</a>
+  </div>
+
+  <!-- ACTIVITY PANEL -->
+  <div class="activity-panel">
+    <div class="activity-head">
+      <div class="activity-eyebrow" id="activityEyebrow">Cargando…</div>
+      <div class="activity-title-row">
+        <div class="activity-title">Actividad reciente</div>
+        <div class="activity-count" id="activityCount"><span class="dot"></span>En vivo</div>
+      </div>
+    </div>
+    <div class="activity-list" id="activityList"></div>
+    <div class="activity-foot" id="activityFoot">
+      Nombres y datos obtenidos en el momento directamente de colombiatebusca.com — no se guardan copias aquí.
+      Toca un caso para ver su ficha real en <a href="https://colombiatebusca.com/" target="_blank" rel="noopener">Colombia te busca →</a>
+    </div>
+  </div>
+
+  <a class="embed-open-full" href="index.html" target="_blank" rel="noopener">⤢ Ver mapa completo</a>
+
+  <a class="mobile-info-toggle" href="https://colombiatebusca.com/" target="_blank" rel="noopener">
+    <b>Ver reportes actualizados en Colombia te busca</b>
+    <span>Datos en vivo →</span>
+  </a>
+
+  <script>
+    // ─── MODO EMBED ───
+    // Si el sitio se carga con ?embed=1 (uso pensado para <iframe>), se
+    // compacta la interfaz vía CSS (body.is-embed) y se fuerza el link
+    // "Ver mapa completo" a abrir la página raíz, sin el parámetro, para
+    // que quien esté viendo el iframe pueda abrir la versión completa.
+    if (new URLSearchParams(location.search).get("embed") === "1") {
+      document.body.classList.add("is-embed");
+    }
+
+    // Bounding box real de Colombia (con un pequeño margen)
+    const COL_BOUNDS = [[-4.5, -79.5], [13.7, -66.8]];
+
+    const map = L.map("map", {
+      zoomControl: false,
+      minZoom: 5,
+      maxZoom: 13,
+      maxBounds: [[-9, -85], [18, -60]],
+      maxBoundsViscosity: .9,
+    }).setView([EPICENTRO.lat, EPICENTRO.lng], 7.2);
+
+    L.control.zoom({ position: "bottomright" }).addTo(map);
+
+    // Sin tile de fondo: usamos solo nuestro propio contorno de
+    // departamentos (GEODATA) para dibujar Colombia. Así evitamos que las
+    // líneas de costa/frontera del tile de CARTO (que no coinciden pixel
+    // a pixel con nuestro GeoJSON) se vean "corridas" o duplicadas al
+    // hacer zoom. El fondo negro lo da directamente el body/mapa.
+    map.getPane("mapPane").style.background = "#07090f";
+
+    // Silueta de Colombia con relleno sutil, para que se distinga del
+    // fondo negro (que ahora es igual de negro por fuera y por dentro
+    // si no rellenamos nada).
+    L.geoJSON(COLOMBIA_GEO, {
+      style: { stroke: false, fillColor: "#0d1421", fillOpacity: 1 },
+      interactive: false,
+    }).addTo(map);
+
+    // Contorno de departamentos + nombre encima de cada uno
+    const labeledDepts = new Set();
+    const geoLayer = L.geoJSON(COLOMBIA_GEO, {
+      style: { color: "rgba(255,255,255,.28)", weight: 1, fillOpacity: 0 },
+      interactive: false,
+      onEachFeature: (feat, layer) => {
+        const raw = (feat.properties && (feat.properties.NOMBRE_DPT || feat.properties.nombre_dpt || feat.properties.DPTO_CNMBR)) || "";
+        const name = raw.trim();
+        if (!name || labeledDepts.has(name)) return;
+        labeledDepts.add(name);
+        const center = layer.getBounds().getCenter();
+        L.marker(center, {
+          icon: L.divIcon({
+            className: "",
+            html: `<div class="dept-lbl">${name}</div>`,
+            iconSize: [160, 16],
+            iconAnchor: [80, 8],
+          }),
+          interactive: false,
+          keyboard: false,
+        }).addTo(map);
+      },
+    }).addTo(map);
+
+    map.fitBounds(geoLayer.getBounds().pad(.03));
+    map.setMaxBounds(L.latLngBounds(COL_BOUNDS).pad(.15));
+
+    // ─── STATS (con animación de conteo) ───
+    function animateNumber(el, to) {
+      const from = parseInt(el.textContent, 10) || 0;
+      if (from === to) { el.textContent = to; return; }
+      const dur = 500, start = performance.now();
+      function step(t) {
+        const p = Math.min(1, (t - start) / dur);
+        el.textContent = Math.round(from + (to - from) * p);
+        if (p < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    }
+    function renderTotals(totals) {
+      animateNumber(document.getElementById("statTotal"), totals.registradas);
+      animateNumber(document.getElementById("statMissing"), totals.porLocalizar);
+      animateNumber(document.getElementById("statFound"), totals.localizadas);
+    }
+    renderTotals(SITE_TOTALS);
+
+    // ─── PANEL DE ACTIVIDAD (columna derecha) ──────────────────────────────
+    // Intenta traer los últimos registros REALES (nombre, edad, ubicación,
+    // categoría) directamente de colombiatebusca.com en cada carga de esta
+    // página — no se guarda ninguna copia en este sitio ni en data.js.
+    // Cada tarjeta enlaza a la ficha oficial real, para que cualquier
+    // corrección o "ya localizado" se vea siempre en la fuente, no aquí.
+    // Si el sitio bloquea CORS o cambia de estructura, se cae de forma
+    // automática a la vista agregada por municipio (sin nombres), que es
+    // la que ya teníamos.
+    const activityList = document.getElementById("activityList");
+    const activityEyebrow = document.getElementById("activityEyebrow");
+    const activityCount = document.getElementById("activityCount");
+    const activityFoot = document.getElementById("activityFoot");
+    const MAX_LIVE_ITEMS = 20;
+
+    // Convierte un fragmento de HTML a texto plano con saltos de línea en
+    // los límites de bloque (párrafo, div, encabezado, <br>...), para poder
+    // aplicar expresiones regulares tolerantes sin depender de que
+    // conozcamos las clases CSS exactas del sitio.
+    function htmlBlockToText(html) {
+      return html
+        .replace(/<(br|\/p|\/div|\/li|\/h[1-6]|\/tr|\/td|\/article)\s*\/?>/gi, "\n")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&nbsp;/gi, " ")
+        .replace(/[ \t]+/g, " ")
+        .replace(/\n\s*\n+/g, "\n")
+        .trim();
+    }
+
+    async function fetchLivePersons() {
+      // 1) Preferido: personas.json generado por scrape_personas.py junto
+      //    a este archivo (mismo origen -> sin problemas de CORS, y no
+      //    depende de que el navegador de cada visitante pueda leer
+      //    colombiatebusca.com directamente).
+      try {
+        const localRes = await fetch("personas.json", { cache: "no-store" });
+        if (localRes.ok) {
+          const data = await localRes.json();
+          if (Array.isArray(data.persons) && data.persons.length > 0) {
+            return { records: data.persons.map(p => ({
+              id: p.id, name: p.name, found: !!p.found,
+              category: p.category || "Reporte",
+              location: p.location || "Ubicación sin precisar",
+              date: p.date || "", age: p.age || "",
+              href: p.href || SITE_BASE,
+            })), generatedAt: data.generated_at || null };
+          }
+        }
+      } catch (err) {
+        console.warn("personas.json no disponible, se intenta fetch directo:", err);
+      }
+
+      // 2) Alternativa: intentar leer colombiatebusca.com directamente
+      //    desde el navegador. Solo funciona si el sitio permite CORS.
+      const res = await fetch(`${SITE_BASE}?tab=persons`, { cache: "no-store", mode: "cors" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const html = await res.text();
+      const doc = new DOMParser().parseFromString(html, "text/html");
+
+      // Agrupa todos los enlaces "?person=ID" por id (cada tarjeta suele
+      // tener 2-3: foto, nombre, "Ver detalles").
+      const links = [...doc.querySelectorAll('a[href*="?person="]')];
+      const byId = new Map();
+      links.forEach(a => {
+        const m = (a.getAttribute("href") || "").match(/[?&]person=([0-9a-f-]{6,})/i);
+        if (!m) return;
+        const id = m[1];
+        if (!byId.has(id)) byId.set(id, []);
+        byId.get(id).push(a);
+      });
+      if (byId.size === 0) throw new Error("No se encontraron personas en la página");
+
+      const records = [];
+      for (const [id, els] of byId) {
+        // El enlace del nombre es el que tiene texto visible real
+        // (el de la foto solo envuelve una <img>, el de "Ver detalles"
+        // dice literalmente eso).
+        const nameLink = els.find(a => {
+          const t = a.textContent.trim();
+          return t.length > 1 && t.toLowerCase() !== "ver detalles" && !a.querySelector("img");
+        });
+        if (!nameLink) continue;
+        const name = nameLink.textContent.trim();
+
+        // Sube hasta encontrar el ancestro que contiene todos los enlaces
+        // de esta tarjeta (foto + nombre + detalles) = la tarjeta completa.
+        let card = nameLink;
+        while (card.parentElement && !els.every(e => card.contains(e))) card = card.parentElement;
+
+        const cardText = htmlBlockToText(card.innerHTML || "");
+        const statusMatch = cardText.match(/(Por localizar|Localizad[ao]s?)/i);
+        const catLine = cardText.split("\n").find(l => statusMatch && l.includes(statusMatch[0]));
+        const category = catLine ? catLine.replace(statusMatch ? statusMatch[0] : "", "").trim() : "";
+        const locMatch = cardText.match(/⌖\s*([^\n]+)/);
+        const dateMatch = cardText.match(/▦\s*([^\n]+)/);
+        const ageMatch = cardText.match(/▣\s*[^-\n]*-\s*(\d+\s*años)\s*-\s*([a-záéíóúñ]+)/i);
+
+        records.push({
+          id,
+          name,
+          href: new URL(nameLink.getAttribute("href"), SITE_BASE).toString(),
+          found: /localizad/i.test(statusMatch ? statusMatch[0] : ""),
+          category: category || "Reporte",
+          location: locMatch ? locMatch[1].trim() : "Ubicación sin precisar",
+          date: dateMatch ? dateMatch[1].trim() : "",
+          age: ageMatch ? ageMatch[1].trim() : "",
+        });
+        if (records.length >= MAX_LIVE_ITEMS) break;
+      }
+      if (records.length === 0) throw new Error("No se pudieron leer los datos de las tarjetas");
+      return { records, generatedAt: null };
+    }
+
+    function renderLiveItems(records, generatedAt) {
+      activityCount.innerHTML = '<span class="dot"></span>En vivo';
+      activityEyebrow.textContent = generatedAt
+        ? "Datos generados " + formatGeneratedAt(generatedAt)
+        : "Actualizado " + nowHHMM();
+      activityFoot.innerHTML = 'Nombres y datos obtenidos directamente de colombiatebusca.com — no se guardan copias aquí más allá de este archivo generado por el scraper. Toca un caso para ver su ficha real en <a href="https://colombiatebusca.com/" target="_blank" rel="noopener">Colombia te busca →</a>';
+
+      activityList.innerHTML = records.map(r => {
+        const kind = r.found ? "ok" : "p";
+        const letter = r.found ? "✓" : "P";
+        const timeMatch = r.date.match(/(\d{1,2}:\d{2}\s*[ap]m)/i);
+        const sideTime = timeMatch ? timeMatch[1] : "";
+        return `
+          <a class="activity-item" href="${r.href}" target="_blank" rel="noopener" style="text-decoration:none;">
+            <div class="activity-badge ${kind}">${letter}</div>
+            <div class="activity-body">
+              <div class="activity-cat ${kind}">${r.found ? "Localizada" : "Por localizar"} · ${r.category}</div>
+              <div class="activity-name">${r.name}</div>
+              <div class="activity-loc">${r.location}${r.age ? " · " + r.age : ""}</div>
+            </div>
+            <div class="activity-side"><b>${sideTime}</b>Ver ficha →</div>
+          </a>
+        `;
+      }).join("");
+    }
+
+    function renderActivityPanelAggregated(note) {
+      activityCount.textContent = locations.length + " municipios";
+      activityEyebrow.textContent = note || "Vista agregada · muestra 10 ago 2026";
+      activityFoot.innerHTML = 'Conteos agregados por municipio, sin nombres ni fotos individuales. Consulta cada caso en <a href="https://colombiatebusca.com/" target="_blank" rel="noopener">Colombia te busca →</a>';
+
+      const ordered = [...locations].sort((a, b) => {
+        if (a.esEpicentro) return -1;
+        if (b.esEpicentro) return 1;
+        return b.porLocalizar - a.porLocalizar;
+      });
+
+      activityList.innerHTML = ordered.map(loc => {
+        const isEpi = !!loc.esEpicentro;
+        const found = loc.porLocalizar === 0 && loc.localizadas > 0;
+        const kind = isEpi ? "sismo" : (found ? "ok" : "p");
+        const letter = isEpi ? "S" : (found ? "✓" : "P");
+        const catLabel = isEpi ? "Zona del epicentro" : (found ? "Casos localizados" : "Personas por localizar");
+        const sideLabel = isEpi ? "Chocó" : (loc.porLocalizar + loc.localizadas) + " reg.";
+        const sideValue = isEpi ? "Epicentro" : loc.porLocalizar;
+
+        return `
+          <a class="activity-item" href="${SITE_BASE}?tab=persons&search=${loc.query}" target="_blank" rel="noopener" style="text-decoration:none;">
+            <div class="activity-badge ${kind}">${letter}</div>
+            <div class="activity-body">
+              <div class="activity-cat ${kind}">${catLabel}</div>
+              <div class="activity-name">${loc.municipio}</div>
+              <div class="activity-loc">${loc.departamento}</div>
+            </div>
+            <div class="activity-side"><b>${sideValue}</b>${sideLabel}</div>
+          </a>
+        `;
+      }).join("");
+    }
+
+    function formatGeneratedAt(iso) {
+      try {
+        const d = new Date(iso);
+        return d.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
+      } catch { return iso; }
+    }
+
+    async function refreshActivityPanel() {
+      try {
+        const { records, generatedAt } = await fetchLivePersons();
+        renderLiveItems(records, generatedAt);
+      } catch (err) {
+        console.warn("No se pudo cargar el listado en vivo, usando vista agregada:", err);
+        renderActivityPanelAggregated("Sin acceso al listado en vivo · vista agregada");
+      }
+    }
+    refreshActivityPanel();
+
+    // ─── ACTUALIZACIÓN PERIÓDICA DE CIFRAS AGREGADAS ───────────────────────
+    // Solo se refrescan los 3 contadores totales (registradas / por localizar
+    // / localizadas), que son cifras públicas de resumen mostradas en la
+    // portada del sitio — NO se descargan ni almacenan registros individuales
+    // (nombres, fotos, documentos) de personas.
+    //
+    // Nota: como este archivo se abre directamente en el navegador (sin
+    // servidor propio), la petición depende de que colombiatebusca.com
+    // permita solicitudes cross-origin (CORS). Si el sitio no lo permite,
+    // el navegador bloqueará la respuesta; en ese caso el mapa simplemente
+    // conserva la última cifra conocida y lo indica en pantalla, en vez de
+    // fallar silenciosamente o inventar datos.
+    const REFRESH_MS = 5 * 60 * 1000; // cada 5 minutos
+    const updateStatus = document.getElementById("updateStatus");
+    const refreshBtn = document.getElementById("refreshBtn");
+
+    function setStatusText(msg) { updateStatus.textContent = msg; }
+    function nowHHMM() {
+      const d = new Date();
+      return d.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
+    }
+
+    function parseTotalsFromHtml(html) {
+      // Extrae texto plano y busca patrones tipo "756 Personas registradas",
+      // "755 Por localizar", "1 Localizadas" — tolerante a variaciones de
+      // espacios/etiquetas HTML entre el número y la palabra.
+      const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+      const grab = (label) => {
+        const re = new RegExp("(\\d[\\d.,]*)\\s*" + label, "i");
+        const m = text.match(re);
+        return m ? parseInt(m[1].replace(/[.,]/g, ""), 10) : null;
+      };
+      const registradas = grab("Personas registradas");
+      const porLocalizar = grab("Por localizar");
+      const localizadas = grab("Localizadas");
+      if (registradas == null && porLocalizar == null && localizadas == null) return null;
+      return {
+        registradas: registradas ?? SITE_TOTALS.registradas,
+        porLocalizar: porLocalizar ?? SITE_TOTALS.porLocalizar,
+        localizadas: localizadas ?? SITE_TOTALS.localizadas,
+      };
+    }
+
+    async function refreshTotals(manual) {
+      if (manual) refreshBtn.classList.add("spinning");
+      setStatusText("Actualizando…");
+      try {
+        const res = await fetch(SITE_BASE, { cache: "no-store", mode: "cors" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const html = await res.text();
+        const totals = parseTotalsFromHtml(html);
+        if (!totals) throw new Error("No se encontraron las cifras en la página");
+        Object.assign(SITE_TOTALS, totals);
+        renderTotals(SITE_TOTALS);
+        setStatusText("Actualizado " + nowHHMM());
+      } catch (err) {
+        // CORS bloqueado, sin red, o cambio de estructura del sitio.
+        // No se rompe el mapa: se conserva la última cifra conocida.
+        setStatusText("Sin conexión al sitio · último dato: " + nowHHMM());
+        console.warn("No se pudo refrescar totales:", err);
+      } finally {
+        if (manual) refreshBtn.classList.remove("spinning");
+      }
+    }
+
+    refreshBtn.addEventListener("click", () => { refreshTotals(true); refreshActivityPanel(); });
+    refreshTotals(false);
+    setInterval(() => refreshTotals(false), REFRESH_MS);
+    setInterval(() => refreshActivityPanel(), REFRESH_MS);
+
+    // ─── EPICENTRO ───
+    L.marker([EPICENTRO.lat, EPICENTRO.lng], {
+      icon: L.divIcon({ className: "", html: '<div class="epicentro-marker"></div>', iconSize: [16, 16], iconAnchor: [8, 8] }),
+      keyboard: false,
+      zIndexOffset: 1000,
+    }).addTo(map).bindTooltip("Epicentro reportado del sismo", { direction: "top", offset: [0, -10] });
+
+    L.circle([EPICENTRO.lat, EPICENTRO.lng], {
+      radius: 60000,
+      color: "#CE1126",
+      weight: 1,
+      fillColor: "#CE1126",
+      fillOpacity: 0.05,
+      dashArray: "4 6",
+    }).addTo(map);
+
+    // ─── MARCADORES POR MUNICIPIO ───
+    function radiusFor(n) {
+      // Escala no lineal para que 1 caso siga siendo visible y 37 no tape el mapa
+      return Math.max(9, Math.min(30, 8 + Math.sqrt(n) * 4));
+    }
+
+    locations.forEach(loc => {
+      const total = loc.porLocalizar + loc.localizadas;
+      const r = radiusFor(loc.porLocalizar);
+      const color = loc.porLocalizar > 0 ? "#CE1126" : "#4ade80";
+
+      const marker = L.circleMarker([loc.lat, loc.lng], {
+        radius: r,
+        color: "#fff",
+        weight: 1.5,
+        fillColor: color,
+        fillOpacity: 0.55,
+        className: "case-marker",
+      }).addTo(map);
+
+      const searchUrl = `${SITE_BASE}?tab=persons&search=${loc.query}`;
+
+      const popupHtml = `
+        <div class="pop-title">${loc.municipio}${loc.esEpicentro ? '' : ''}</div>
+        <div class="pop-dept">${loc.departamento}${loc.esEpicentro ? ' · zona del epicentro' : ''}</div>
+        <div class="pop-rows">
+          <div class="pop-stat miss"><div class="n">${loc.porLocalizar}</div><div class="l">Por localizar</div></div>
+          <div class="pop-stat found"><div class="n">${loc.localizadas}</div><div class="l">Localizadas</div></div>
+        </div>
+        <a class="pop-link" href="${searchUrl}" target="_blank" rel="noopener">Ver reportes de ${loc.municipio} →</a>
+      `;
+      marker.bindPopup(popupHtml, { maxWidth: 260 });
+
+      marker.on("mouseover", function () { this.setStyle({ fillOpacity: .8, weight: 2.5 }); });
+      marker.on("mouseout", function () { this.setStyle({ fillOpacity: .55, weight: 1.5 }); });
+    });
+
+    // ─── TAMAÑO DEL MAPA EN IFRAME ───
+    // Leaflet mide el contenedor una sola vez al iniciar. Si el sitio vive
+    // dentro de un <iframe> que luego cambia de tamaño (layout responsive
+    // del sitio anfitrión, rotación de pantalla, etc.), el mapa queda con
+    // el tamaño viejo y se ve cortado o con partes en gris. Un
+    // ResizeObserver sobre el propio contenedor del mapa lo corrige avisándole
+    // a Leaflet que vuelva a medir, sin depender de que el host dispare un
+    // evento "resize" en window (que dentro de un iframe no siempre llega).
+    const mapEl = document.getElementById("map");
+    if (window.ResizeObserver) {
+      let resizeTimer = null;
+      new ResizeObserver(() => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => map.invalidateSize(), 100);
+      }).observe(mapEl);
+    } else {
+      window.addEventListener("resize", () => map.invalidateSize());
+    }
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Ejemplo de embed — Mapa de emergencia Chocó</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; background: #0b0d14; color: #eee; }
+    .page { max-width: 900px; margin: 0 auto; padding: 24px; }
+    h1 { font-size: 20px; }
+    p { color: #9aa; line-height: 1.5; }
+    code { background: #1a1d27; padding: 2px 6px; border-radius: 4px; }
+
+    /* Contenedor responsive: mantiene proporción 4:3 sin importar el
+       ancho disponible. Ajusta el padding-bottom para otra proporción
+       (ej. 56.25% para 16:9). */
+    .map-embed-wrap {
+      position: relative;
+      width: 100%;
+      padding-bottom: 75%;   /* 4:3 */
+      max-width: 900px;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid #232633;
+    }
+    .map-embed-wrap iframe {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      border: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>Ejemplo: mapa incrustado como iframe</h1>
+    <p>
+      Este archivo es solo un ejemplo de uso. El truco es el
+      <code>&lt;div&gt;</code> contenedor con <code>padding-bottom</code> en
+      porcentaje: eso reserva la altura según el ancho disponible, para que
+      el iframe sea responsive dentro de cualquier sitio (sin depender de
+      un alto fijo en píxeles que se vea mal en celular).
+    </p>
+
+    <div class="map-embed-wrap">
+      <iframe
+        src="index.html?embed=1"
+        title="Mapa de emergencia · Sismo Chocó"
+        loading="lazy"
+        referrerpolicy="no-referrer-when-downgrade"
+        allow="geolocation 'none'"
+      ></iframe>
+    </div>
+
+    <p style="margin-top:16px">
+      Código para copiar en cualquier otro sitio (cambia
+      <code>TU-DOMINIO</code> por donde publiques el mapa, ej. tu URL de
+      GitHub Pages o Render):
+    </p>
+    <pre style="background:#1a1d27; padding:14px; border-radius:8px; overflow-x:auto; font-size:12px;"><code>&lt;div style="position:relative;width:100%;padding-bottom:75%;"&gt;
+  &lt;iframe
+    src="https://TU-DOMINIO/index.html?embed=1"
+    style="position:absolute;top:0;left:0;width:100%;height:100%;border:0;"
+    loading="lazy"
+    referrerpolicy="no-referrer-when-downgrade"
+    title="Mapa de emergencia · Sismo Chocó"&gt;
+  &lt;/iframe&gt;
+&lt;/div&gt;</code></pre>
+  </div>
+</body>
+</html>
