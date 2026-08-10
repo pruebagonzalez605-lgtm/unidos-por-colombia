@@ -90,6 +90,73 @@ Totales de la plataforma en ese momento:
 > conteos por municipio en `data.js` **son un corte parcial**, no el total
 > real de cada ciudad.
 
+## El panel "Actividad reciente" nunca muestra registros individuales
+
+`index.html` intencionalmente **no** intenta leer `personas.json` ni hacer
+fetch directo a colombiatebusca.com para reconstruir tarjetas individuales
+en el navegador de cada visitante. Aunque esos datos no queden guardados en
+ningún lado, mostrarlos a cada visitante tiene el mismo riesgo de privacidad
+que archivarlos — son personas reales y vulnerables. El panel siempre
+muestra la vista agregada por municipio (`renderActivityPanelAggregated`),
+sin excepción.
+
+`scrape_personas.py` y `personas.json` se mantienen en el repo solo como
+referencia histórica de cómo se armó la muestra inicial — no se ejecutan ni
+se sirven en el sitio publicado.
+
+## Actualización automática con Render (solo agregados)
+
+`render-service/` es un servicio Python (Flask) pensado para desplegar en
+[Render](https://render.com) como **Web Service**. Corre un scheduler
+interno que cada `REFRESH_SECONDS` (5 min por defecto):
+
+1. Recorre `colombiatebusca.com` y cuenta reportes **por municipio**
+   (por localizar / localizadas) — nunca guarda ni expone nombre, edad,
+   género, id ni el enlace a la ficha de ninguna persona. La garantía está
+   en el código: `_parse_cards()` en `scrape_agregado.py` solo devuelve
+   `{municipio, departamento, localizado}` por cada tarjeta, y el resto del
+   pipeline (`aggregate()`, `/agregado.json`) trabaja únicamente con esos
+   tres campos agrupados en conteos.
+2. Lee los 3 contadores totales de la portada.
+
+Expone dos endpoints JSON, con CORS abierto porque son datos agregados sin
+información personal:
+
+- `GET /agregado.json` → `{ generated_at, locations: [{municipio, departamento, lat, lng, porLocalizar, localizadas, ubicacionAproximada, query}, ...] }`
+- `GET /totales.json` → `{ registradas, porLocalizar, localizadas }`
+
+### Desplegar
+
+1. En Render: **New → Web Service**, conecta este repo, y como *Root
+   Directory* pon `render-service` (o usa el `render.yaml` incluido con
+   **New → Blueprint**, que ya trae el root dir y el `startCommand`
+   configurados).
+2. Runtime: Python 3. Build command: `pip install -r requirements.txt`.
+   Start command: `gunicorn server:app --workers 1 --threads 4 --bind 0.0.0.0:$PORT`.
+3. Plan gratuito: el servicio "duerme" tras 15 min sin tráfico y tarda unos
+   segundos en despertar con la primera visita — normal en el plan free,
+   no es un error. El scheduler solo corre mientras el servicio está
+   despierto.
+4. Cuando Render te dé la URL pública (ej.
+   `https://mapa-choco-agregados.onrender.com`), pégala en `index.html` en
+   la constante `RENDER_API_BASE` (buscá `RENDER_API_BASE = ""` cerca de
+   la sección de actualización de totales) y vuelve a subir el archivo a
+   GitHub Pages.
+
+Con `RENDER_API_BASE` configurado, el mapa hace fetch a estos dos
+endpoints cada 5 minutos y redibuja los puntos y contadores. Si el
+servicio de Render no responde (dormido, caído, o `RENDER_API_BASE` vacío),
+el mapa cae automáticamente a los datos estáticos de `data.js` — nunca se
+rompe ni queda en blanco.
+
+### Límite de páginas y frecuencia
+
+`scrape_agregado.py` recorre como máximo `MAX_PAGES = 3` páginas de
+resultados por corrida, para no sobrecargar colombiatebusca.com. Igual que
+recomienda `README_SCRAPER.md`, mantené `REFRESH_SECONDS` en un valor
+razonable (300s o más) — es una plataforma ciudadana, no una API pensada
+para scraping intensivo.
+
 ## Cómo actualizar los datos honestamente
 
 Si vas a mantener este mapa vivo, la forma correcta de hacerlo es:

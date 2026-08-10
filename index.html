@@ -278,6 +278,7 @@
     .pop-stat.miss .n { color: var(--red); }
     .pop-stat.found .n { color: #4ade80; }
     .pop-stat .l { font-size: 8px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-top: 2px; }
+    .pop-approx { font-size: 9px; color: var(--muted); margin: -6px 0 10px; font-style: italic; }
     .pop-link {
       display: block; text-align: center;
       background: rgba(252,209,22,.12); color: var(--gold);
@@ -561,87 +562,22 @@
     }
 
     async function fetchLivePersons() {
-      // 1) Preferido: personas.json generado por scrape_personas.py junto
-      //    a este archivo (mismo origen -> sin problemas de CORS, y no
-      //    depende de que el navegador de cada visitante pueda leer
-      //    colombiatebusca.com directamente).
-      try {
-        const localRes = await fetch("personas.json", { cache: "no-store" });
-        if (localRes.ok) {
-          const data = await localRes.json();
-          if (Array.isArray(data.persons) && data.persons.length > 0) {
-            return { records: data.persons.map(p => ({
-              id: p.id, name: p.name, found: !!p.found,
-              category: p.category || "Reporte",
-              location: p.location || "Ubicación sin precisar",
-              date: p.date || "", age: p.age || "",
-              href: p.href || SITE_BASE,
-            })), generatedAt: data.generated_at || null };
-          }
-        }
-      } catch (err) {
-        console.warn("personas.json no disponible, se intenta fetch directo:", err);
-      }
-
-      // 2) Alternativa: intentar leer colombiatebusca.com directamente
-      //    desde el navegador. Solo funciona si el sitio permite CORS.
-      const res = await fetch(`${SITE_BASE}?tab=persons`, { cache: "no-store", mode: "cors" });
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      const html = await res.text();
-      const doc = new DOMParser().parseFromString(html, "text/html");
-
-      // Agrupa todos los enlaces "?person=ID" por id (cada tarjeta suele
-      // tener 2-3: foto, nombre, "Ver detalles").
-      const links = [...doc.querySelectorAll('a[href*="?person="]')];
-      const byId = new Map();
-      links.forEach(a => {
-        const m = (a.getAttribute("href") || "").match(/[?&]person=([0-9a-f-]{6,})/i);
-        if (!m) return;
-        const id = m[1];
-        if (!byId.has(id)) byId.set(id, []);
-        byId.get(id).push(a);
-      });
-      if (byId.size === 0) throw new Error("No se encontraron personas en la página");
-
-      const records = [];
-      for (const [id, els] of byId) {
-        // El enlace del nombre es el que tiene texto visible real
-        // (el de la foto solo envuelve una <img>, el de "Ver detalles"
-        // dice literalmente eso).
-        const nameLink = els.find(a => {
-          const t = a.textContent.trim();
-          return t.length > 1 && t.toLowerCase() !== "ver detalles" && !a.querySelector("img");
-        });
-        if (!nameLink) continue;
-        const name = nameLink.textContent.trim();
-
-        // Sube hasta encontrar el ancestro que contiene todos los enlaces
-        // de esta tarjeta (foto + nombre + detalles) = la tarjeta completa.
-        let card = nameLink;
-        while (card.parentElement && !els.every(e => card.contains(e))) card = card.parentElement;
-
-        const cardText = htmlBlockToText(card.innerHTML || "");
-        const statusMatch = cardText.match(/(Por localizar|Localizad[ao]s?)/i);
-        const catLine = cardText.split("\n").find(l => statusMatch && l.includes(statusMatch[0]));
-        const category = catLine ? catLine.replace(statusMatch ? statusMatch[0] : "", "").trim() : "";
-        const locMatch = cardText.match(/⌖\s*([^\n]+)/);
-        const dateMatch = cardText.match(/▦\s*([^\n]+)/);
-        const ageMatch = cardText.match(/▣\s*[^-\n]*-\s*(\d+\s*años)\s*-\s*([a-záéíóúñ]+)/i);
-
-        records.push({
-          id,
-          name,
-          href: new URL(nameLink.getAttribute("href"), SITE_BASE).toString(),
-          found: /localizad/i.test(statusMatch ? statusMatch[0] : ""),
-          category: category || "Reporte",
-          location: locMatch ? locMatch[1].trim() : "Ubicación sin precisar",
-          date: dateMatch ? dateMatch[1].trim() : "",
-          age: ageMatch ? ageMatch[1].trim() : "",
-        });
-        if (records.length >= MAX_LIVE_ITEMS) break;
-      }
-      if (records.length === 0) throw new Error("No se pudieron leer los datos de las tarjetas");
-      return { records, generatedAt: null };
+      // Este proyecto decidió deliberadamente NO mostrar registros
+      // individuales (nombre, edad, ubicación exacta) de personas
+      // reportadas — son personas reales y vulnerables. Por eso este
+      // panel solo usa la vista agregada por municipio (ver
+      // renderActivityPanelAggregated más abajo) y esta función
+      // simplemente lo indica lanzando, así refreshActivityPanel() cae
+      // siempre al fallback agregado.
+      //
+      // Deliberadamente NO se intenta leer personas.json ni hacer un
+      // fetch directo a colombiatebusca.com para reconstruir tarjetas
+      // individuales en el navegador: aunque no se "guarde" nada, mostrar
+      // esos datos a cada visitante tiene el mismo riesgo de privacidad
+      // que guardarlos. Si en el futuro colombiatebusca.com publica una
+      // API pública de conteos agregados, esa sí sería la fuente correcta
+      // para reemplazar este fallback.
+      throw new Error("Vista de registros individuales deshabilitada por diseño");
     }
 
     function renderLiveItems(records, generatedAt) {
@@ -738,6 +674,13 @@
     const updateStatus = document.getElementById("updateStatus");
     const refreshBtn = document.getElementById("refreshBtn");
 
+    // ─── SERVICIO DE AGREGADOS EN RENDER (opcional) ───
+    // Si desplegaste render-service/ (ver README), pega acá la URL pública
+    // que te da Render, ej: "https://mapa-choco-agregados.onrender.com"
+    // Mientras esto esté vacío, el mapa sigue funcionando solo con los
+    // datos estáticos de data.js y el intento directo a colombiatebusca.com.
+    const RENDER_API_BASE = ""; // <-- pega aquí tu URL de Render, sin / al final
+
     function setStatusText(msg) { updateStatus.textContent = msg; }
     function nowHHMM() {
       const d = new Date();
@@ -768,6 +711,24 @@
     async function refreshTotals(manual) {
       if (manual) refreshBtn.classList.add("spinning");
       setStatusText("Actualizando…");
+
+      // 1) Preferido: servicio propio en Render (mismo dato agregado,
+      //    sin depender de que colombiatebusca.com permita CORS).
+      if (RENDER_API_BASE) {
+        try {
+          const res = await fetch(RENDER_API_BASE + "/totales.json", { cache: "no-store" });
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          const totals = await res.json();
+          Object.assign(SITE_TOTALS, totals);
+          renderTotals(SITE_TOTALS);
+          setStatusText("Actualizado " + nowHHMM());
+          return;
+        } catch (err) {
+          console.warn("Render /totales.json no disponible, se intenta fetch directo:", err);
+        }
+      }
+
+      // 2) Alternativa: intento directo a colombiatebusca.com (depende de CORS).
       try {
         const res = await fetch(SITE_BASE, { cache: "no-store", mode: "cors" });
         if (!res.ok) throw new Error("HTTP " + res.status);
@@ -787,10 +748,41 @@
       }
     }
 
-    refreshBtn.addEventListener("click", () => { refreshTotals(true); refreshActivityPanel(); });
+    // ─── AGREGADOS POR MUNICIPIO EN VIVO (vía Render) ───
+    // Actualiza los puntos del mapa y la lista agregada del panel lateral
+    // con los conteos frescos que produce render-service/. Nunca toca
+    // nombres/edad/id — solo municipio + conteos, igual que data.js.
+    let liveMarkersLayer = null;
+    async function refreshLocationsFromRender() {
+      if (!RENDER_API_BASE) return;
+      try {
+        const res = await fetch(RENDER_API_BASE + "/agregado.json", { cache: "no-store" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+        if (!Array.isArray(data.locations) || data.locations.length === 0) return;
+
+        // Reemplaza el contenido del array `locations` en el lugar (no la
+        // referencia), porque otras funciones ya la capturaron por closure.
+        locations.length = 0;
+        data.locations.forEach(loc => locations.push(loc));
+
+        drawLocationMarkers();
+        renderActivityPanelAggregated("Datos generados " + formatGeneratedAt(data.generated_at));
+      } catch (err) {
+        console.warn("No se pudo refrescar agregado.json de Render:", err);
+      }
+    }
+
+    refreshBtn.addEventListener("click", () => {
+      refreshTotals(true);
+      refreshActivityPanel();
+      refreshLocationsFromRender();
+    });
     refreshTotals(false);
+    refreshLocationsFromRender();
     setInterval(() => refreshTotals(false), REFRESH_MS);
     setInterval(() => refreshActivityPanel(), REFRESH_MS);
+    setInterval(() => refreshLocationsFromRender(), REFRESH_MS);
 
     // ─── EPICENTRO ───
     L.marker([EPICENTRO.lat, EPICENTRO.lng], {
@@ -814,36 +806,48 @@
       return Math.max(9, Math.min(30, 8 + Math.sqrt(n) * 4));
     }
 
-    locations.forEach(loc => {
-      const total = loc.porLocalizar + loc.localizadas;
-      const r = radiusFor(loc.porLocalizar);
-      const color = loc.porLocalizar > 0 ? "#CE1126" : "#4ade80";
+    function drawLocationMarkers() {
+      // Si ya había un set de marcadores dibujado (ej. al llegar datos
+      // frescos de Render), lo quitamos primero para no duplicar puntos.
+      if (liveMarkersLayer) {
+        map.removeLayer(liveMarkersLayer);
+      }
+      liveMarkersLayer = L.layerGroup().addTo(map);
 
-      const marker = L.circleMarker([loc.lat, loc.lng], {
-        radius: r,
-        color: "#fff",
-        weight: 1.5,
-        fillColor: color,
-        fillOpacity: 0.55,
-        className: "case-marker",
-      }).addTo(map);
+      locations.forEach(loc => {
+        const r = radiusFor(loc.porLocalizar);
+        const color = loc.porLocalizar > 0 ? "#CE1126" : "#4ade80";
 
-      const searchUrl = `${SITE_BASE}?tab=persons&search=${loc.query}`;
+        const marker = L.circleMarker([loc.lat, loc.lng], {
+          radius: r,
+          color: "#fff",
+          weight: 1.5,
+          fillColor: color,
+          fillOpacity: 0.55,
+          className: "case-marker",
+        }).addTo(liveMarkersLayer);
 
-      const popupHtml = `
-        <div class="pop-title">${loc.municipio}${loc.esEpicentro ? '' : ''}</div>
-        <div class="pop-dept">${loc.departamento}${loc.esEpicentro ? ' · zona del epicentro' : ''}</div>
-        <div class="pop-rows">
-          <div class="pop-stat miss"><div class="n">${loc.porLocalizar}</div><div class="l">Por localizar</div></div>
-          <div class="pop-stat found"><div class="n">${loc.localizadas}</div><div class="l">Localizadas</div></div>
-        </div>
-        <a class="pop-link" href="${searchUrl}" target="_blank" rel="noopener">Ver reportes de ${loc.municipio} →</a>
-      `;
-      marker.bindPopup(popupHtml, { maxWidth: 260 });
+        const searchUrl = `${SITE_BASE}?tab=persons&search=${loc.query}`;
+        const aproxNote = loc.ubicacionAproximada
+          ? '<div class="pop-approx">Ubicación aproximada (centro del departamento)</div>' : '';
 
-      marker.on("mouseover", function () { this.setStyle({ fillOpacity: .8, weight: 2.5 }); });
-      marker.on("mouseout", function () { this.setStyle({ fillOpacity: .55, weight: 1.5 }); });
-    });
+        const popupHtml = `
+          <div class="pop-title">${loc.municipio}${loc.esEpicentro ? '' : ''}</div>
+          <div class="pop-dept">${loc.departamento}${loc.esEpicentro ? ' · zona del epicentro' : ''}</div>
+          <div class="pop-rows">
+            <div class="pop-stat miss"><div class="n">${loc.porLocalizar}</div><div class="l">Por localizar</div></div>
+            <div class="pop-stat found"><div class="n">${loc.localizadas}</div><div class="l">Localizadas</div></div>
+          </div>
+          ${aproxNote}
+          <a class="pop-link" href="${searchUrl}" target="_blank" rel="noopener">Ver reportes de ${loc.municipio} →</a>
+        `;
+        marker.bindPopup(popupHtml, { maxWidth: 260 });
+
+        marker.on("mouseover", function () { this.setStyle({ fillOpacity: .8, weight: 2.5 }); });
+        marker.on("mouseout", function () { this.setStyle({ fillOpacity: .55, weight: 1.5 }); });
+      });
+    }
+    drawLocationMarkers();
 
     // ─── TAMAÑO DEL MAPA EN IFRAME ───
     // Leaflet mide el contenedor una sola vez al iniciar. Si el sitio vive
