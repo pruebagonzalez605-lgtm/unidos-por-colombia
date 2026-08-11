@@ -32,13 +32,9 @@ log = logging.getLogger("mapa-choco")
 
 REFRESH_SECONDS = int(os.environ.get("REFRESH_SECONDS", "300"))  # 5 min por defecto
 
-# El plan free de Render "duerme" el contenedor entero tras un rato sin
-# tráfico y lo reinicia desde cero en la próxima visita — eso borra la
-# memoria del proceso igual que un deploy. Para que el servicio no quede
-# devolviendo 503 mientras corre el primer ciclo otra vez, guardamos el
-# último resultado bueno en disco y lo recargamos al arrancar. Los datos
-# que persisten acá son los mismos conteos agregados que ya expone
-# /agregado.json y /totales.json — nunca información individual.
+# Cache en disco: el plan free de Render reinicia el contenedor y borra la
+# memoria del proceso. Persistimos solo conteos agregados (nunca datos
+# individuales) para servir algo útil tras un cold start.
 CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache_estado.json")
 
 app = Flask(__name__)
@@ -46,18 +42,17 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 
 _state_lock = threading.Lock()
 _state = {
-    "agregado": None,      # último resultado bueno de scrape_agregado()
+    "agregado": None,
     "agregado_error": None,
-    "totales": None,       # {"registradas": int, "porLocalizar": int, "localizadas": int}
+    "totales": None,
     "totales_error": None,
 }
 
+_thread_started = False
+_thread_lock = threading.Lock()
+
 
 def _load_cache():
-    """Recupera el último estado bueno guardado en disco, si existe, para
-    no arrancar en blanco tras un reinicio (deploy o spin-down del plan
-    free). Si el archivo no existe o está corrupto, sigue de largo sin
-    romper el arranque."""
     try:
         with open(CACHE_PATH, "r", encoding="utf-8") as f:
             cached = json.load(f)
@@ -74,9 +69,6 @@ def _load_cache():
 
 
 def _save_cache():
-    """Escribe el estado actual a disco. Se llama después de cada
-    actualización exitosa. Falla en silencio (con warning) si el disco no
-    es escribible — el servicio sigue funcionando solo en memoria."""
     try:
         with _state_lock:
             snapshot = {"agregado": _state["agregado"], "totales": _state["totales"]}
@@ -87,9 +79,7 @@ def _save_cache():
 
 
 def _fetch_totales():
-    """Lee solo los 3 contadores de resumen de la portada — ningún dato
-    individual. Heurística tolerante: busca 3 números junto a las palabras
-    clave que ya usa el propio sitio en su portada."""
+    """Lee solo los 3 contadores de resumen de la portada."""
     resp = requests.get(
         SITE_BASE,
         headers={
@@ -104,8 +94,6 @@ def _fetch_totales():
     text = soup.get_text(" ", strip=True)
 
     def find_near(label):
-        # Entre el número y la etiqueta puede haber una palabra pegada
-        # (ej. "756Personas registradas"), no solo espacios.
         m = re.search(r"([\d.,]{1,7})\s*(?:\w+\s*)?" + label, text, re.I) or \
             re.search(label + r"\s*(?:\w+\s*)?([\d.,]{1,7})", text, re.I)
         if not m:
@@ -121,12 +109,11 @@ def _fetch_totales():
         "registradas": registradas,
         "porLocalizar": por_localizar,
         "localizadas": localizadas or 0,
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
 
 
 def _refresh_once():
-    """Una pasada de scrape. Devuelve True si al menos uno de los dos
-    endpoints quedó con datos buenos."""
     ok = False
     try:
         log.info("Iniciando scrape de agregado…")
@@ -134,8 +121,11 @@ def _refresh_once():
         with _state_lock:
             _state["agregado"] = data
             _state["agregado_error"] = None
-        log.info("agregado.json actualizado: %d municipios, muestra=%d",
-                  len(data["locations"]), data["sample_size"])
+        log.info(
+            "agregado.json actualizado: %d municipios, muestra=%d",
+            len(data["locations"]),
+            data["sample_size"],
+        )
         _save_cache()
         ok = True
     except Exception as e:
@@ -161,20 +151,39 @@ def _refresh_once():
 
 
 def _refresh_loop():
-    # Primera pasada inmediata; si falla, reintenta más seguido al inicio.
     attempt = 0
     while True:
         attempt += 1
-        log.info("Ciclo de actualización #%d", attempt)
+        log.info("Ciclo de actualización #%d (pid=%s)", attempt, os.getpid())
         ok = _refresh_once()
-        # Si aún no hay datos, reintentar en 30s; si ya hay, usar el intervalo normal
         sleep_for = REFRESH_SECONDS if ok else min(30, REFRESH_SECONDS)
         log.info("Próxima actualización en %ds (ok=%s)", sleep_for, ok)
         time.sleep(sleep_for)
 
 
+def _ensure_background_thread():
+    """Arranca el hilo de scrape UNA sola vez, dentro del worker que
+    atiende HTTP. Evita el problema de Gunicorn donde el master importa
+    el módulo, corre el hilo en otro proceso y los workers quedan sin datos.
+    """
+    global _thread_started
+    with _thread_lock:
+        if _thread_started:
+            return
+        _thread_started = True
+        t = threading.Thread(target=_refresh_loop, daemon=True, name="scrape-loop")
+        t.start()
+        log.info("Hilo de scrape arrancado en pid=%s", os.getpid())
+
+
+@app.before_request
+def _before_request():
+    _ensure_background_thread()
+
+
 @app.get("/")
 def root():
+    _ensure_background_thread()
     with _state_lock:
         ok_agregado = _state["agregado"] is not None
         ok_totales = _state["totales"] is not None
@@ -191,11 +200,13 @@ def root():
         "generated_at": gen,
         "agregado_error": err_a,
         "totales_error": err_t,
+        "pid": os.getpid(),
     })
 
 
 @app.get("/agregado.json")
 def agregado():
+    _ensure_background_thread()
     with _state_lock:
         data = _state["agregado"]
         err = _state["agregado_error"]
@@ -206,6 +217,7 @@ def agregado():
 
 @app.get("/totales.json")
 def totales():
+    _ensure_background_thread()
     with _state_lock:
         data = _state["totales"]
         err = _state["totales_error"]
@@ -214,18 +226,12 @@ def totales():
     return jsonify(data)
 
 
-# Recupera el último estado bueno (si existe) ANTES de arrancar el
-# scheduler, para que / , /agregado.json y /totales.json puedan servir
-# algo útil desde el primer request, aunque sea un poco viejo, en lugar
-# de 503 mientras corre el primer ciclo de scraping otra vez.
+# Cargar cache al importar (mismo proceso del worker cuando atienda).
 _load_cache()
-
-# Arranca el scheduler en un hilo de fondo apenas se importa el módulo,
-# para que funcione tanto con `python server.py` como bajo gunicorn.
-_thread = threading.Thread(target=_refresh_loop, daemon=True)
-_thread.start()
 
 
 if __name__ == "__main__":
+    # Modo local: arrancar hilo ya y servir con Flask
+    _ensure_background_thread()
     port = int(os.environ.get("PORT", "10000"))
     app.run(host="0.0.0.0", port=port)
