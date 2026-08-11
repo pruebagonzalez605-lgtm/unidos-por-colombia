@@ -8,9 +8,11 @@ persona publicada, SOLO los campos que ya son públicos en la propia página:
   - id, nombre, estado (por localizar / localizada)
   - categoría, ubicación, fecha/hora del reporte
   - edad, género, código CTB (si están visibles)
+  - URL de la miniatura pública (photo) — NO descarga el archivo de imagen
 
-NO descarga ni guarda fotos, documentos de identidad ni datos de contacto
-del reportante.
+NO descarga ni guarda archivos de fotos, documentos de identidad ni datos
+de contacto del reportante. Solo se guarda la URL pública de la miniatura
+para mostrarla por hotlink desde colombiatebusca.com.
 
 Genera `personas.json` junto a este script.
 
@@ -152,6 +154,12 @@ def parse_card(article) -> dict | None:
         elif "▣" in txt or txt.startswith("▣"):
             age, gender = parse_meta_age_gender(txt)
 
+    # Miniatura pública (solo URL; no se descarga el binario)
+    photo = ""
+    img = article.select_one("a.photo img[src], img[src*='media.php']")
+    if img and img.get("src"):
+        photo = urljoin(SITE_BASE, img["src"].replace("&amp;", "&"))
+
     return {
         "id": pid,
         "name": name,
@@ -162,6 +170,7 @@ def parse_card(article) -> dict | None:
         "age": age,
         "gender": gender,
         "code": code,
+        "photo": photo,
         "href": full_href,
     }
 
