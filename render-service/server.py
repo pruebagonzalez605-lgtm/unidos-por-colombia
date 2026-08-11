@@ -124,34 +124,53 @@ def _fetch_totales():
     }
 
 
+def _refresh_once():
+    """Una pasada de scrape. Devuelve True si al menos uno de los dos
+    endpoints quedó con datos buenos."""
+    ok = False
+    try:
+        log.info("Iniciando scrape de agregado…")
+        data = scrape_agregado()
+        with _state_lock:
+            _state["agregado"] = data
+            _state["agregado_error"] = None
+        log.info("agregado.json actualizado: %d municipios, muestra=%d",
+                  len(data["locations"]), data["sample_size"])
+        _save_cache()
+        ok = True
+    except Exception as e:
+        with _state_lock:
+            _state["agregado_error"] = str(e)
+        log.exception("Fallo actualizando agregado: %s", e)
+
+    try:
+        log.info("Iniciando fetch de totales…")
+        totales = _fetch_totales()
+        with _state_lock:
+            _state["totales"] = totales
+            _state["totales_error"] = None
+        log.info("totales.json actualizado: %s", totales)
+        _save_cache()
+        ok = True
+    except Exception as e:
+        with _state_lock:
+            _state["totales_error"] = str(e)
+        log.exception("Fallo actualizando totales: %s", e)
+
+    return ok
+
+
 def _refresh_loop():
+    # Primera pasada inmediata; si falla, reintenta más seguido al inicio.
+    attempt = 0
     while True:
-        try:
-            data = scrape_agregado()
-            with _state_lock:
-                _state["agregado"] = data
-                _state["agregado_error"] = None
-            log.info("agregado.json actualizado: %d municipios, muestra=%d",
-                      len(data["locations"]), data["sample_size"])
-            _save_cache()
-        except Exception as e:
-            with _state_lock:
-                _state["agregado_error"] = str(e)
-            log.warning("Fallo actualizando agregado: %s", e)
-
-        try:
-            totales = _fetch_totales()
-            with _state_lock:
-                _state["totales"] = totales
-                _state["totales_error"] = None
-            log.info("totales.json actualizado: %s", totales)
-            _save_cache()
-        except Exception as e:
-            with _state_lock:
-                _state["totales_error"] = str(e)
-            log.warning("Fallo actualizando totales: %s", e)
-
-        time.sleep(REFRESH_SECONDS)
+        attempt += 1
+        log.info("Ciclo de actualización #%d", attempt)
+        ok = _refresh_once()
+        # Si aún no hay datos, reintentar en 30s; si ya hay, usar el intervalo normal
+        sleep_for = REFRESH_SECONDS if ok else min(30, REFRESH_SECONDS)
+        log.info("Próxima actualización en %ds (ok=%s)", sleep_for, ok)
+        time.sleep(sleep_for)
 
 
 @app.get("/")
@@ -159,11 +178,19 @@ def root():
     with _state_lock:
         ok_agregado = _state["agregado"] is not None
         ok_totales = _state["totales"] is not None
+        err_a = _state["agregado_error"]
+        err_t = _state["totales_error"]
+        gen = None
+        if _state["agregado"]:
+            gen = _state["agregado"].get("generated_at")
     return jsonify({
         "service": "mapa-choco-agregados",
         "agregado_disponible": ok_agregado,
         "totales_disponible": ok_totales,
         "refresh_seconds": REFRESH_SECONDS,
+        "generated_at": gen,
+        "agregado_error": err_a,
+        "totales_error": err_t,
     })
 
 

@@ -36,7 +36,7 @@ HEADERS = {
 }
 
 REQUEST_TIMEOUT = 35  # el sitio puede tardar bajo carga alta; mejor esperar de más que fallar rápido
-MAX_PAGES = 3  # límite de páginas a recorrer por corrida, para no sobrecargar el sitio origen
+MAX_PAGES = 2  # límite de páginas a recorrer por corrida, para no sobrecargar el sitio origen
 
 
 def _get_with_retry(url, tries=2):
