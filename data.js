@@ -10,17 +10,17 @@
 // oficial para evitar difundir datos desactualizados o incorrectos sobre
 // personas reales y vulnerables.
 //
-// Última muestra tomada: 10 Ago 2026, ~14:09 (página 1 de resultados).
-// Total plataforma en ese momento: 756 registradas · 755 por localizar · 1 localizada
+// Última muestra tomada: 11 Ago 2026, 12:42 am
+// Total plataforma en ese momento: 2455 registradas · 2398 por localizar · 55 localizadas
 // ─────────────────────────────────────────────────────────────────────────
 
 const SITE_BASE = "https://colombiatebusca.com/";
 
 const SITE_TOTALS = {
-  registradas: 756,
-  porLocalizar: 755,
-  localizadas: 1,
-  muestraTomada: "10 Ago 2026, 02:09 pm",
+  registradas: 2455,
+  porLocalizar: 2398,
+  localizadas: 55,
+  muestraTomada: "11 Ago 2026, 12:42 am",
 };
 
 // Epicentro reportado del sismo (Chocó) — referencia geográfica del mapa.
@@ -31,88 +31,107 @@ const EPICENTRO = {
 };
 
 // locations: conteos agregados por municipio a partir de los reportes
-// visibles en colombiatebusca.com (muestra de la página 1, 60 reportes).
+// visibles en colombiatebusca.com (muestra de las primeras páginas).
 // "query" es el texto usado para armar el enlace de búsqueda al sitio real.
 const locations = [
   {
-    municipio: "Pereira",
-    departamento: "Risaralda",
-    lat: 4.8133, lng: -75.6961,
-    porLocalizar: 37,
-    localizadas: 0,
-    query: "Pereira",
+    "municipio": "Pereira",
+    "departamento": "Risaralda",
+    "lat": 4.8133,
+    "lng": -75.6961,
+    "ubicacionAproximada": false,
+    "porLocalizar": 28,
+    "localizadas": 0,
+    "query": "Pereira"
   },
   {
-    municipio: "Cali",
-    departamento: "Valle del Cauca",
-    lat: 3.4516, lng: -76.5320,
-    porLocalizar: 10,
-    localizadas: 0,
-    query: "Cali",
+    "municipio": "Cali",
+    "departamento": "Valle del Cauca",
+    "lat": 3.4516,
+    "lng": -76.532,
+    "ubicacionAproximada": false,
+    "porLocalizar": 18,
+    "localizadas": 0,
+    "query": "Cali"
   },
   {
-    municipio: "Dosquebradas",
-    departamento: "Risaralda",
-    lat: 4.8390, lng: -75.6710,
-    porLocalizar: 6,
-    localizadas: 0,
-    query: "Dosquebradas",
+    "municipio": "Sin precisar",
+    "departamento": "Quindío",
+    "lat": 4.4975,
+    "lng": -75.7018,
+    "ubicacionAproximada": true,
+    "porLocalizar": 3,
+    "localizadas": 0,
+    "query": "Sin precisar"
   },
   {
-    municipio: "La Virginia",
-    departamento: "Risaralda",
-    lat: 4.9019, lng: -75.8814,
-    porLocalizar: 1,
-    localizadas: 0,
-    query: "Virginia",
+    "municipio": "Quibdó",
+    "departamento": "Chocó",
+    "lat": 5.6947,
+    "lng": -76.6583,
+    "ubicacionAproximada": false,
+    "porLocalizar": 2,
+    "localizadas": 0,
+    "query": "Quibdó"
   },
   {
-    municipio: "Armenia",
-    departamento: "Quindío",
-    lat: 4.5339, lng: -75.6811,
-    porLocalizar: 1,
-    localizadas: 0,
-    query: "Armenia",
+    "municipio": "Dosquebradas",
+    "departamento": "Risaralda",
+    "lat": 4.839,
+    "lng": -75.671,
+    "ubicacionAproximada": false,
+    "porLocalizar": 2,
+    "localizadas": 0,
+    "query": "Dosquebradas"
   },
   {
-    municipio: "La Tebaida",
-    departamento: "Quindío",
-    lat: 4.4547, lng: -75.7972,
-    porLocalizar: 1,
-    localizadas: 0,
-    query: "Tebaida",
+    "municipio": "El águila",
+    "departamento": "Valle del Cauca",
+    "lat": 3.9802,
+    "lng": -76.5664,
+    "ubicacionAproximada": true,
+    "porLocalizar": 1,
+    "localizadas": 0,
+    "query": "El águila"
   },
   {
-    municipio: "San José",
-    departamento: "Caldas",
-    lat: 5.0972, lng: -75.7908,
-    porLocalizar: 1,
-    localizadas: 0,
-    query: "San Jos%C3%A9",
+    "municipio": "Cajamarca",
+    "departamento": "Tolima",
+    "lat": 4.4422,
+    "lng": -75.3128,
+    "ubicacionAproximada": false,
+    "porLocalizar": 1,
+    "localizadas": 0,
+    "query": "Cajamarca"
   },
   {
-    municipio: "Anserma Nuevo",
-    departamento: "Valle del Cauca",
-    lat: 4.7961, lng: -76.0250,
-    porLocalizar: 1,
-    localizadas: 0,
-    query: "Anserma",
+    "municipio": "Sevilla",
+    "departamento": "Valle del Cauca",
+    "lat": 3.9802,
+    "lng": -76.5664,
+    "ubicacionAproximada": true,
+    "porLocalizar": 1,
+    "localizadas": 0,
+    "query": "Sevilla"
   },
   {
-    municipio: "Santa Rosa de Cabal",
-    departamento: "Risaralda",
-    lat: 4.8694, lng: -75.6222,
-    porLocalizar: 1,
-    localizadas: 0,
-    query: "Santa+Rosa",
+    "municipio": "Manizales",
+    "departamento": "Caldas",
+    "lat": 5.0689,
+    "lng": -75.5174,
+    "ubicacionAproximada": false,
+    "porLocalizar": 1,
+    "localizadas": 0,
+    "query": "Manizales"
   },
   {
-    municipio: "Chocó (ubicación sin precisar)",
-    departamento: "Chocó",
-    lat: 5.2, lng: -76.9,
-    porLocalizar: 1,
-    localizadas: 0,
-    query: "Choco",
-    esEpicentro: true,
-  },
+    "municipio": "Bogotá",
+    "departamento": "Cundinamarca",
+    "lat": 4.711,
+    "lng": -74.0721,
+    "ubicacionAproximada": false,
+    "porLocalizar": 1,
+    "localizadas": 0,
+    "query": "Bogotá"
+  }
 ];

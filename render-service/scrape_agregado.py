@@ -57,14 +57,92 @@ def _norm(s: str) -> str:
     return s.strip().lower()
 
 
+# Alias frecuentes de digitación errónea o incompleta en los reportes.
+DEPT_ALIASES = {
+    "valle": "Valle del Cauca",
+    "valle de cauca": "Valle del Cauca",
+    "valle del cauca": "Valle del Cauca",
+    "choco": "Chocó",
+    "risaralda": "Risaralda",
+    "risarlda": "Risaralda",
+    "pereira": "Risaralda",
+    "cali": "Valle del Cauca",
+    "quindio": "Quindío",
+    "tolima": "Tolima",
+    "antioquia": "Antioquia",
+    "cundinamarca": "Cundinamarca",
+    "caldas": "Caldas",
+    "bogota": "Bogotá D.C.",
+    "bogota d.c": "Bogotá D.C.",
+    "bogota dc": "Bogotá D.C.",
+    "eje cafetero": "Risaralda",
+    "victoria": "Caldas",
+    "salento": "Quindío",
+}
+
+MUNI_ALIASES = {
+    "dos quebradas": "Dosquebradas",
+    "dosquebradas": "Dosquebradas",
+    "la virginia": "La Virginia",
+    "quibdo": "Quibdó",
+    "bogota": "Bogotá",
+    "santafe de bogota": "Bogotá",
+}
+
+
+def _canon_muni_dept(municipio: str, departamento: str):
+    """Normaliza nombres y corrige pares invertidos / aliases comunes."""
+    m_raw = (municipio or "").strip()
+    d_raw = (departamento or "").strip()
+    m_n = _norm(m_raw)
+    d_n = _norm(d_raw)
+
+    KNOWN_MUNIS = {"cali", "pereira", "quibdo", "dosquebradas", "dos quebradas",
+                   "armenia", "manizales", "bogota", "cajamarca", "sevilla",
+                   "la virginia", "cartago", "buenaventura"}
+
+    # Si el municipio parece un departamento y el depto un municipio → invertir
+    if (m_n in DEPT_ALIASES or m_n in ("valle del cauca", "risaralda", "choco", "quindio", "caldas")) and (
+        d_n in KNOWN_MUNIS or d_n in MUNI_ALIASES
+    ):
+        m_raw, d_raw = d_raw, m_raw
+        m_n, d_n = _norm(m_raw), _norm(d_raw)
+
+    # Corregir departamento
+    if d_n in DEPT_ALIASES:
+        d_raw = DEPT_ALIASES[d_n]
+    elif not d_raw or d_n in ("no", "no se", "sin precisar", "colombia", "x"):
+        d_raw = ""
+
+    # Corregir municipio
+    if m_n in MUNI_ALIASES:
+        m_raw = MUNI_ALIASES[m_n]
+    elif m_n in ("no", "no se", "sin precisar", "", "x"):
+        m_raw = "Sin precisar"
+    elif m_n in DEPT_ALIASES and m_n not in KNOWN_MUNIS:
+        # Escribieron solo el depto como "municipio"
+        d_raw = DEPT_ALIASES.get(m_n, m_raw)
+        m_raw = "Sin precisar"
+
+    # Cali / Pereira a menudo vienen sin depto correcto
+    if _norm(m_raw) == "cali" and (not d_raw or d_raw == "Colombia"):
+        d_raw = "Valle del Cauca"
+    if _norm(m_raw) == "pereira" and (not d_raw or d_raw == "Colombia"):
+        d_raw = "Risaralda"
+    if _norm(m_raw) == "armenia" and (not d_raw or d_raw in ("Colombia", "Armenia")):
+        d_raw = "Quindío"
+
+    return m_raw or "Sin precisar", d_raw or "Colombia"
+
+
 def _split_location(raw: str):
     """'Pereira, Risaralda' -> ('Pereira', 'Risaralda'). Si no hay coma,
     devuelve el texto completo como municipio y departamento vacío."""
     raw = (raw or "").strip()
     if "," in raw:
         muni, dept = raw.split(",", 1)
-        return muni.strip(), dept.strip()
-    return raw, ""
+        return _canon_muni_dept(muni.strip(), dept.strip())
+    return _canon_muni_dept(raw, "")
 
 
 def _ancestors(tag):
@@ -156,17 +234,21 @@ def fetch_all_cards(max_pages=MAX_PAGES, timeout=REQUEST_TIMEOUT):
 
 
 def aggregate(records):
-    """Agrupa por (municipio normalizado, departamento normalizado) y
+    """Agrupa por municipio normalizado (departamento como desempate) y
     devuelve la lista en el mismo formato que ya usa data.js del sitio."""
     groups = {}
     for r in records:
-        key = (_norm(r["municipio"]), _norm(r["departamento"]))
+        muni, dept = _canon_muni_dept(r["municipio"], r["departamento"])
+        key = _norm(muni)
         g = groups.setdefault(key, {
-            "municipio": r["municipio"],
-            "departamento": r["departamento"],
+            "municipio": muni,
+            "departamento": dept,
             "porLocalizar": 0,
             "localizadas": 0,
         })
+        # Preferir departamento más específico si ya teníamos uno genérico
+        if dept and (not g["departamento"] or g["departamento"] == "Colombia"):
+            g["departamento"] = dept
         if r["localizado"]:
             g["localizadas"] += 1
         else:

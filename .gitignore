@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.env
+.venv
+venv/
+ENV/
+.idea/
+.vscode/
+*.log
+.DS_Store
+cache_estado.json
+render-service/cache_estado.json
+*.pyc
+.pytest_cache/

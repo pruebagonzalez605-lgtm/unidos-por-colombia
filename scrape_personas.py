@@ -2,203 +2,290 @@
 """
 scrape_personas.py — Colombia te busca → personas.json
 ────────────────────────────────────────────────────────────────────────────
-Descarga la página 1 (más recientes primero) de colombiatebusca.com y
-extrae, por cada persona publicada, SOLO los campos que ya son públicos
-en la propia página: nombre, estado (por localizar / localizada),
-categoría, ubicación, fecha/hora del reporte y edad/género si están
-visibles. NO descarga ni guarda fotos, documentos, ni el detalle de
-contacto del reportante.
+Descarga las páginas de listado de colombiatebusca.com y extrae, por cada
+persona publicada, SOLO los campos que ya son públicos en la propia página:
 
-Genera `personas.json` junto a este script, con esta forma:
+  - id, nombre, estado (por localizar / localizada)
+  - categoría, ubicación, fecha/hora del reporte
+  - edad, género, código CTB (si están visibles)
 
-{
-  "generated_at": "2026-08-10T20:15:03Z",
-  "source": "https://colombiatebusca.com/?tab=persons",
-  "persons": [
-    {
-      "id": "6b6f39d3-...",
-      "name": "Ana Forero Forero",
-      "found": false,
-      "category": "Terremoto",
-      "location": "Pereira, Risaralda",
-      "date": "10 Aug. 2026, 02:09 pm",
-      "age": "50 años",
-      "gender": "sin especificar",
-      "href": "https://colombiatebusca.com/?person=6b6f39d3-..."
-    },
-    ...
-  ]
-}
+NO descarga ni guarda fotos, documentos de identidad ni datos de contacto
+del reportante.
 
-index.html hace fetch a "personas.json" (mismo origen, sin problemas de
-CORS) y si no lo encuentra o está vacío, cae de forma automática a la
-vista agregada por municipio.
+Genera `personas.json` junto a este script.
 
 USO
 ────
-  pip install requests beautifulsoup4
+  pip install -r requirements.txt
   python3 scrape_personas.py
 
-Para que el mapa se vea realmente "en vivo", este script debe correr
-periódicamente en algún lado (cron, GitHub Actions, tu propio servidor)
-y el personas.json resultante debe quedar accesible en la misma carpeta
-donde sirves index.html. Ver README_SCRAPER.md para dos formas de
-programarlo sin necesidad de un servidor propio.
+  # Opciones útiles:
+  python3 scrape_personas.py --pages 5          # hasta 5 páginas (100 registros)
+  python3 scrape_personas.py --pages 0          # todas las páginas disponibles
+  python3 scrape_personas.py --max 50           # máximo de personas a guardar
+  python3 scrape_personas.py --out otra.json    # archivo de salida distinto
+
+Para mantener el mapa "en vivo", programa este script (cron, GitHub Actions,
+etc.) y deja personas.json accesible junto a index.html.
+Ver README_SCRAPER.md.
 """
 
+from __future__ import annotations
+
+import argparse
 import json
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
 
-SOURCE_URL = "https://colombiatebusca.com/?tab=persons"
-OUTPUT_PATH = Path(__file__).parent / "personas.json"
-MAX_ITEMS = 40
-TIMEOUT_SECONDS = 15
+SITE_BASE = "https://colombiatebusca.com/"
+LIST_URL = f"{SITE_BASE}?tab=persons"
+DEFAULT_OUTPUT = Path(__file__).parent / "personas.json"
+DEFAULT_MAX_PAGES = 3          # ~60 registros; evita sobrecargar el sitio
+REQUEST_TIMEOUT = 25
+PAUSE_BETWEEN_PAGES = 1.2      # segundos de cortesía entre páginas
+
 USER_AGENT = (
-    "Mozilla/5.0 (compatible; MapaEmergenciaChoco/1.0; "
+    "Mozilla/5.0 (compatible; MapaEmergenciaChoco/1.1; "
     "+https://colombiatebusca.com/ referencia informativa, sin fines comerciales)"
 )
 
+HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "es-CO,es;q=0.9,en;q=0.8",
+}
+
+
+# ── helpers ────────────────────────────────────────────────────────────────
 
 def fetch_html(url: str) -> str:
-    resp = requests.get(
-        url,
-        headers={"User-Agent": USER_AGENT, "Accept-Language": "es-CO,es;q=0.9"},
-        timeout=TIMEOUT_SECONDS,
-    )
+    resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
     return resp.text
 
 
-def find_person_id(href: str) -> str | None:
+def extract_person_id(href: str | None) -> str | None:
     if not href:
         return None
-    m = re.search(r"[?&]person=([0-9a-fA-F-]{6,})", href)
+    m = re.search(r"[?&]person=([0-9a-fA-F-]{8,})", href)
     return m.group(1) if m else None
 
 
-def card_for(tag):
-    """Sube por los padres hasta encontrar un contenedor 'razonable' de
-    tarjeta (no toda la página, no un simple <a>/<span> suelto)."""
-    node = tag
-    for _ in range(8):
-        if node.parent is None:
-            break
-        node = node.parent
-        text_len = len(node.get_text(strip=True))
-        # Heurística: una tarjeta de persona normalmente tiene entre ~40
-        # y ~600 caracteres de texto visible (nombre + estado + ubicación
-        # + fecha + botones). Si nos pasamos de ahí, ya es un contenedor
-        # que agrupa varias tarjetas -> nos quedamos con el nivel anterior.
-        if text_len > 700:
-            return node.parent if node.parent is not None else node
-    return node
+def parse_meta_age_gender(text: str) -> tuple[str, str]:
+    """
+    Ejemplos de texto en .meta:
+      '▣ Sin documento público  - 12 años - femenino'
+      '▣ CC 123456  - 45 años - masculino'
+      '▣ Sin documento público  - sin edad - sin especificar'
+    """
+    age = ""
+    gender = ""
+    # edad
+    m_age = re.search(r"(\d+\s*años?)", text, re.I)
+    if m_age:
+        age = m_age.group(1).strip()
+    # género (última parte después del último " - ")
+    parts = [p.strip() for p in text.split(" - ") if p.strip()]
+    if parts:
+        last = parts[-1].lower()
+        if any(g in last for g in ("femenino", "masculino", "mujer", "hombre", "sin especificar")):
+            gender = parts[-1].strip()
+    return age, gender
 
 
-def extract_persons(html: str):
+def parse_card(article) -> dict | None:
+    """Extrae un registro limpio a partir de un <article class="card">."""
+    # Enlace / id
+    name_link = article.select_one("h2 a[href*='person=']") or article.select_one("a[href*='person=']")
+    if not name_link:
+        return None
+
+    href = name_link.get("href", "")
+    pid = extract_person_id(href)
+    if not pid:
+        return None
+
+    name = name_link.get_text(strip=True)
+    if not name:
+        return None
+
+    # URL absoluta
+    full_href = urljoin(SITE_BASE, href)
+
+    # Badges: estado + categoría
+    found = False
+    category = "Reporte"
+    for badge in article.select(".card-badges .badge"):
+        txt = badge.get_text(strip=True)
+        classes = " ".join(badge.get("class", [])).lower()
+        if "missing" in classes or re.search(r"por\s*localizar", txt, re.I):
+            found = False
+        elif "found" in classes or re.search(r"^localizad", txt, re.I):
+            found = True
+        if "category" in classes:
+            category = txt or category
+
+    # Metadatos (ubicación, fecha, edad/género)
+    location = ""
+    date = ""
+    age = ""
+    gender = ""
+    code = ""
+
+    code_el = article.select_one("p.card-code")
+    if code_el:
+        code = code_el.get_text(strip=True)
+
+    for meta in article.select("p.meta"):
+        txt = meta.get_text(" ", strip=True)
+        if "⌖" in txt or txt.startswith("⌖"):
+            location = re.sub(r"^⌖\s*", "", txt).strip()
+        elif "▦" in txt or txt.startswith("▦"):
+            date = re.sub(r"^▦\s*", "", txt).strip()
+        elif "▣" in txt or txt.startswith("▣"):
+            age, gender = parse_meta_age_gender(txt)
+
+    return {
+        "id": pid,
+        "name": name,
+        "found": found,
+        "category": category,
+        "location": location,
+        "date": date,
+        "age": age,
+        "gender": gender,
+        "code": code,
+        "href": full_href,
+    }
+
+
+def extract_persons_from_html(html: str) -> list[dict]:
     soup = BeautifulSoup(html, "html.parser")
-
-    # Agrupa todos los <a href="...?person=ID"> por id.
-    by_id: dict[str, list] = {}
-    for a in soup.find_all("a", href=True):
-        pid = find_person_id(a["href"])
-        if pid:
-            by_id.setdefault(pid, []).append(a)
-
+    cards = soup.select("article.card")
     records = []
-    seen_cards = set()
+    seen_ids: set[str] = set()
 
-    for pid, links in by_id.items():
-        # El enlace "con nombre" es el que tiene texto visible real y no
-        # envuelve solo una imagen ni dice "Ver detalles".
-        name_link = None
-        for a in links:
-            txt = a.get_text(strip=True)
-            if txt and txt.lower() != "ver detalles" and not a.find("img"):
-                name_link = a
-                break
-        if not name_link:
+    for card in cards:
+        rec = parse_card(card)
+        if not rec or rec["id"] in seen_ids:
             continue
-
-        name = name_link.get_text(strip=True)
-        card = card_for(name_link)
-        card_key = id(card)
-        if card_key in seen_cards:
-            continue
-        seen_cards.add(card_key)
-
-        card_text = card.get_text("\n", strip=True)
-
-        status_match = re.search(r"(Por localizar|Localizad[ao]s?)", card_text, re.I)
-        found = bool(status_match) and "localizad" in status_match.group(1).lower() and "por" not in status_match.group(1).lower()
-
-        # La categoría suele quedar pegada justo después del estado en la
-        # misma línea (p. ej. "Por localizarTerremoto").
-        category = ""
-        if status_match:
-            line = next((l for l in card_text.split("\n") if status_match.group(0) in l), "")
-            category = line.replace(status_match.group(0), "").strip()
-
-        loc_match = re.search(r"⌖\s*([^\n]+)", card_text)
-        date_match = re.search(r"▦\s*([^\n]+)", card_text)
-        age_match = re.search(r"▣[^-\n]*-\s*(\d+\s*años)\s*-\s*([a-záéíóúñ]+)", card_text, re.I)
-
-        href = name_link.get("href", "")
-        if href.startswith("?") or href.startswith("/"):
-            href = "https://colombiatebusca.com/" + href.lstrip("/")
-        elif not href.startswith("http"):
-            href = "https://colombiatebusca.com/" + href
-
-        records.append({
-            "id": pid,
-            "name": name,
-            "found": found,
-            "category": category or "Reporte",
-            "location": loc_match.group(1).strip() if loc_match else "",
-            "date": date_match.group(1).strip() if date_match else "",
-            "age": age_match.group(1).strip() if age_match else "",
-            "gender": age_match.group(2).strip() if age_match else "",
-            "href": href,
-        })
-
-        if len(records) >= MAX_ITEMS:
-            break
+        seen_ids.add(rec["id"])
+        records.append(rec)
 
     return records
 
 
-def main():
-    try:
-        html = fetch_html(SOURCE_URL)
-    except requests.RequestException as exc:
-        print(f"ERROR al descargar {SOURCE_URL}: {exc}", file=sys.stderr)
-        sys.exit(1)
+def has_next_page(html: str) -> bool:
+    soup = BeautifulSoup(html, "html.parser")
+    # Enlace "Siguiente" o cualquier link con page=N+1
+    for a in soup.select("a[href*='page=']"):
+        txt = a.get_text(strip=True).lower()
+        if "siguiente" in txt or "next" in txt or "›" in txt or "»" in txt:
+            return True
+    return False
 
-    persons = extract_persons(html)
+
+def scrape(
+    max_pages: int = DEFAULT_MAX_PAGES,
+    max_items: int | None = None,
+) -> list[dict]:
+    """
+    Recorre páginas del listado y devuelve la lista de personas.
+    max_pages=0 significa 'todas las que existan' (con límite de seguridad).
+    """
+    all_records: list[dict] = []
+    seen_ids: set[str] = set()
+    page = 1
+    hard_limit = 50 if max_pages == 0 else max_pages  # seguridad
+
+    while page <= hard_limit:
+        url = LIST_URL if page == 1 else f"{LIST_URL}&page={page}"
+        print(f"  → página {page}: {url}", flush=True)
+
+        try:
+            html = fetch_html(url)
+        except requests.RequestException as exc:
+            print(f"  ERROR descargando página {page}: {exc}", file=sys.stderr)
+            break
+
+        records = extract_persons_from_html(html)
+        if not records:
+            print(f"  (sin tarjetas en página {page}, fin)")
+            break
+
+        nuevos = 0
+        for rec in records:
+            if rec["id"] in seen_ids:
+                continue
+            seen_ids.add(rec["id"])
+            all_records.append(rec)
+            nuevos += 1
+            if max_items and len(all_records) >= max_items:
+                print(f"  alcanzado --max={max_items}")
+                return all_records
+
+        print(f"  +{nuevos} personas (total acumulado: {len(all_records)})")
+
+        if max_pages != 0 and page >= max_pages:
+            break
+        if not has_next_page(html):
+            break
+
+        page += 1
+        time.sleep(PAUSE_BETWEEN_PAGES)
+
+    return all_records
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Scraper de personas publicadas en colombiatebusca.com"
+    )
+    parser.add_argument(
+        "--pages", type=int, default=DEFAULT_MAX_PAGES,
+        help=f"Máximo de páginas a recorrer (0 = todas). Default: {DEFAULT_MAX_PAGES}",
+    )
+    parser.add_argument(
+        "--max", type=int, default=None,
+        help="Máximo de personas a guardar (opcional)",
+    )
+    parser.add_argument(
+        "--out", type=Path, default=DEFAULT_OUTPUT,
+        help=f"Ruta del JSON de salida. Default: {DEFAULT_OUTPUT}",
+    )
+    args = parser.parse_args()
+
+    print(f"Scrapeando {LIST_URL} …")
+    persons = scrape(max_pages=args.pages, max_items=args.max)
+
     if not persons:
         print(
             "ADVERTENCIA: no se extrajo ninguna persona. "
-            "Es posible que el sitio haya cambiado de estructura; "
-            "revisa extract_persons(). No se sobrescribe personas.json.",
+            "Es posible que el sitio haya cambiado de estructura. "
+            "No se sobrescribe el archivo anterior.",
             file=sys.stderr,
         )
         sys.exit(2)
 
     payload = {
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "source": SOURCE_URL,
+        "source": LIST_URL,
+        "count": len(persons),
         "persons": persons,
     }
 
-    OUTPUT_PATH.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    args.out.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
-    print(f"OK: {len(persons)} personas escritas en {OUTPUT_PATH}")
+    print(f"OK: {len(persons)} personas escritas en {args.out}")
 
 
 if __name__ == "__main__":
