@@ -29,7 +29,7 @@
       --border: rgba(255,255,255,.08);
       --glass: rgba(10,15,25,.94);
       --panel-w: 380px;
-      --activity-w: 320px;
+      --activity-w: 400px;
       --r: 14px;
     }
 
@@ -153,7 +153,7 @@
     .legend-note { font-size: 10px; color: var(--muted); margin-top: 8px; line-height: 1.5; border-top: 1px solid var(--border); padding-top: 8px; }
 
     /* ─── SOURCE / DISCLAIMER PANEL ─── */
-    .source-panel {
+    .source-panel { display: none !important;
       position: fixed;
       bottom: 0; right: var(--activity-w);
       z-index: 1400;
@@ -546,7 +546,7 @@
     }
     @media (min-width: 769px) { .mobile-info-toggle { display: none; } }
     @media (min-width: 769px) and (max-width: 1100px) {
-      :root { --activity-w: 260px; }
+      :root { --activity-w: 320px; }
       .activity-name { font-size: 14px; }
       .activity-side { font-size: 9px; }
     }
@@ -984,6 +984,7 @@
     }
 
     function renderActivityPanelAggregated(note) {
+      if (panelView === "persons") return; // no pisar la pestaña Personas
       const filtered = getFilteredLocations();
       activityCount.textContent = filtered.length + (filtered.length === 1 ? " municipio" : " municipios");
       activityEyebrow.textContent = note || ("Actualizado " + nowHHMM());
@@ -1214,7 +1215,9 @@
         data.locations.forEach(loc => locations.push(loc));
 
         drawLocationMarkers();
-        renderActivityPanelAggregated("Datos generados " + formatGeneratedAt(data.generated_at));
+        if (panelView === "muni") {
+          renderActivityPanelAggregated("Datos generados " + formatGeneratedAt(data.generated_at));
+        }
       } catch (err) {
         console.warn("No se pudo refrescar agregado.json de Render:", err);
       }
@@ -1222,8 +1225,13 @@
 
     refreshBtn.addEventListener("click", () => {
       refreshTotals(true);
-      refreshActivityPanel();
       refreshLocationsFromRender();
+      if (panelView === "persons") {
+        refreshActivityPanel(); // recarga personas.json sin cambiar de pestaña
+      } else {
+        refreshActivityPanel(); // cachea personas en segundo plano
+        // la lista de municipios la actualiza refreshLocationsFromRender
+      }
     });
     refreshTotals(false);
     refreshLocationsFromRender();
